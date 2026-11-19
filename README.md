@@ -1,5 +1,7 @@
 # osu!MapMatcher desktop
 
+![MapMatcher: the osu! maps that actually play like the one you selected](docs/banner.png)
+
 **Find the osu! maps that actually play like the one you have selected**, in a small
 native Windows window next to the game. Same engine and API as
 [osu!MapMatcher](https://github.com/Ayreth/OsuMapMatcher) and its

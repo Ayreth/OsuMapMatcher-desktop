@@ -623,7 +623,7 @@
         <ControlTemplate TargetType="Button">
           <Grid>
             <Ellipse x:Name="e" Fill="{StaticResource Paper3}" Stroke="{StaticResource RuleStrong}" StrokeThickness="1" />
-            <TextBlock x:Name="t" Text="osu!" FontWeight="SemiBold" FontSize="10.5" Foreground="{StaticResource Ink}"
+            <TextBlock x:Name="t" Text="osu!" FontWeight="Normal" FontSize="10.5" Foreground="{StaticResource Ink}"
                        HorizontalAlignment="Center" VerticalAlignment="Center" Margin="1,0,0,1" />
           </Grid>
           <ControlTemplate.Triggers>

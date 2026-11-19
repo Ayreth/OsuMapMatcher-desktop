@@ -75,7 +75,7 @@
         <StackPanel>
           <Grid>
             <!-- the cover sits on the left and fades into the row -->
-            <Rectangle Width="210" HorizontalAlignment="Left" IsHitTestVisible="False" Opacity="0.6">
+            <Rectangle Width="210" HorizontalAlignment="Left" IsHitTestVisible="False" Opacity="0.22">
               <Rectangle.Fill>
                 <ImageBrush ImageSource="{Binding Thumb}" Stretch="UniformToFill" AlignmentX="Left" />
               </Rectangle.Fill>
@@ -305,7 +305,7 @@
 
     <!-- ================= hero content ================= -->
     <Grid Grid.Row="1" MinHeight="236">
-    <StackPanel VerticalAlignment="Bottom" Margin="24,12,24,30">
+    <StackPanel VerticalAlignment="Bottom" Margin="24,12,24,48">
       <!-- a new release: a quiet strip, not a popup -->
       <Border x:Name="UpdateBanner" Visibility="Collapsed" Background="#E6161619" BorderBrush="{StaticResource RuleStrong}"
               BorderThickness="1" CornerRadius="{StaticResource RadiusControl}" Padding="12,6,6,6" Margin="0,0,0,18">
@@ -374,7 +374,7 @@
 
       <ScrollViewer x:Name="ResultsScroll" Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
                     Focusable="False">
-        <ItemsControl x:Name="ResultsList" ItemTemplate="{StaticResource MatchTemplate}" Focusable="False" />
+        <ItemsControl x:Name="ResultsList" ItemTemplate="{StaticResource MatchTemplate}" Focusable="False" Margin="0,8,0,0" />
       </ScrollViewer>
 
       <!-- loading: shimmer text and a 2 px track, no spinner -->
