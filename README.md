@@ -32,11 +32,13 @@ Without any game: drop a `.osu` on the window, or copy a beatmap link / id / `.o
 ## Using it
 
 - Pick a map in song select; after a second the list fills in.
-- Click a suggestion to see **why** it was picked (where the distance comes from, what differs, what is the same),
-  then **Get in game** (`osu://b/…`, handled by osu!, lazer or Torii), **Open on osu!**, or **Maps like this one** to
-  search from it without touching the game.
-- The **settings** button next to the window controls opens weights, steer, filters and connection. Settings are kept in
+- The round **osu!** button on each suggestion opens it in game (`osu://b/…`, handled by osu!, lazer or Torii) or,
+  if you prefer, on the website: *Settings → General → osu! button*.
+- Click a suggestion to see **why** it was picked (where the distance comes from, what differs, what is the same), and
+  **Maps like this one** to search from it without touching the game.
+- **Settings**, next to the window controls, holds weights, steer, filters and connection. They are kept in
   `%AppData%\osu!MapMatcher\settings.json`.
+- When a new version is released, a strip at the top of the window says so, with a link to download it.
 
 ## Privacy
 

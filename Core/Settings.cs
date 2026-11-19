@@ -20,7 +20,12 @@ public sealed class Settings
     public string ApiOverride { get; set; } = "";
     public bool AlwaysOnTop { get; set; }
     public double Width { get; set; } = 560;
-    public double Height { get; set; } = 960;
+    public double Height { get; set; } = 780;
+    /// <summary>Bumped when the default window shape changes, so an old saved size is dropped.</summary>
+    public int LayoutVersion { get; set; }
+    /// <summary>"game" (osu://) or "web" (the beatmap page).</summary>
+    public string OsuButton { get; set; } = "game";
+    public string DismissedVersion { get; set; } = "";
     public double? Left { get; set; }
     public double? Top { get; set; }
     public bool Maximized { get; set; }

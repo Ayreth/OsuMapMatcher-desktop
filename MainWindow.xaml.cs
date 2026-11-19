@@ -99,6 +99,7 @@ public partial class MainWindow : Window
         _feed.Start();
 
         await LoadMetaAsync();
+        _ = CheckForUpdateAsync();
 
         // "Open with" a .osu, or a link passed on the command line
         var args = Environment.GetCommandLineArgs().Skip(1).ToArray();
@@ -154,6 +155,8 @@ public partial class MainWindow : Window
         TosuBox.Text = _settings.TosuHost == "127.0.0.1:24050" ? "" : _settings.TosuHost;
         ApiBox.Text = _settings.ApiOverride;
         OnTopBox.IsChecked = _settings.AlwaysOnTop;
+        MatchVm.OsuTarget = _settings.OsuButton == "web" ? "web" : "game";
+        OsuTargetBox.SelectedIndex = MatchVm.OsuTarget == "web" ? 1 : 0;
         Topmost = _settings.AlwaysOnTop;
 
         WeightsToggle.IsChecked = _settings.OpenSections.Contains("weights");
@@ -318,6 +321,11 @@ public partial class MainWindow : Window
 
     private void RestorePlacement()
     {
+        if (_settings.LayoutVersion < 2)
+        {
+            // the first portrait layout was taller: start again from the new shape
+            _settings.Width = 560; _settings.Height = 780; _settings.LayoutVersion = 2;
+        }
         Width = Math.Max(MinWidth, _settings.Width);
         Height = Math.Max(MinHeight, _settings.Height);
         if (_settings.Left is { } left && _settings.Top is { } top
@@ -356,7 +364,6 @@ public partial class MainWindow : Window
         {
             _matches.Clear();
             ShowEmpty("No map yet", "Open osu!, lazer or Torii and pick a map in song select. You can also drop a .osu file on this window, or paste a beatmap link with Ctrl+V.");
-            CountText.Text = "";
             SummaryText.Text = "";
             return;
         }
@@ -409,15 +416,27 @@ public partial class MainWindow : Window
         HeroArtist.Text = artist;
         HeroTitleRun.Text = title;
         HeroVersionRun.Text = version.Length > 0 ? $" [{version}]" : "";
+        HeroMapperRun.Text = mapper.Length > 0 ? $"  by {mapper}" : "";
 
-        HeroStats.Children.Clear();
+        HeroStats.Inlines.Clear();
+        HeroMods.Visibility = Visibility.Collapsed;
         if (_pinned is not null || _live is not null)
         {
-            if (mapper.Length > 0) AddStat("Mapper", mapper, sans: true);
-            if (mods is not null) AddStat("Mods", mods);
-            AddStat("Stars", stars > 0 ? Fmt.Stars(stars) : "–", stars > 0 ? "★" : null);
-            AddStat("BPM", bpm > 0 ? Fmt.Bpm(bpm) : "–");
-            AddStat("Length", length > 0 ? Fmt.Time(length) : "–");
+            var dim = (Brush)FindResource("Ink4");
+            void Part(string value, string unit, bool gap)
+            {
+                if (gap) HeroStats.Inlines.Add(new System.Windows.Documents.Run("    "));
+                HeroStats.Inlines.Add(new System.Windows.Documents.Run(value));
+                if (unit.Length > 0) HeroStats.Inlines.Add(new System.Windows.Documents.Run(unit) { Foreground = dim, FontSize = 13 });
+            }
+            Part(stars > 0 ? Fmt.Stars(stars) : "–", "★", false);
+            Part(bpm > 0 ? Fmt.Bpm(bpm) : "–", " bpm", true);
+            Part(length > 0 ? Fmt.Time(length) : "–", "", true);
+            if (mods is not null && mods != "NM")
+            {
+                HeroModsText.Text = mods;
+                HeroMods.Visibility = Visibility.Visible;
+            }
         }
 
         HeroNotice.Visibility = notice.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
@@ -427,19 +446,6 @@ public partial class MainWindow : Window
 
     private static string? Cover(string? listCover) =>
         listCover?.Replace("list@2x", "cover@2x").Replace("/list.", "/cover.");
-
-    private void AddStat(string label, string value, string? unit = null, bool sans = false)
-    {
-        var block = new StackPanel { Margin = new Thickness(0, 0, 30, 8) };
-        block.Children.Add(new TextBlock { Text = label, Style = (Style)FindResource("Label"), Margin = new Thickness(0, 0, 0, 6) });
-        var v = new TextBlock { Style = (Style)FindResource("MonoValue"), FontSize = 15 };
-        if (sans) { v.FontFamily = (FontFamily)FindResource("Sans"); v.FontWeight = FontWeights.Medium; }
-        v.Inlines.Add(new System.Windows.Documents.Run(value));
-        if (unit is not null)
-            v.Inlines.Add(new System.Windows.Documents.Run(unit) { Foreground = (Brush)FindResource("Ink4"), FontSize = 13 });
-        block.Children.Add(v);
-        HeroStats.Children.Add(block);
-    }
 
     private async void SetHeroImage(string? source, string? key)
     {
@@ -506,7 +512,6 @@ public partial class MainWindow : Window
             if (_live is { IsStandard: false } && _pinned is null)
             {
                 _matches.Clear();
-                CountText.Text = "";
                 ShowEmpty("This map cannot be used", "Only osu!standard maps are indexed. Pick another map, or paste a link above.");
             }
             return;
@@ -544,7 +549,6 @@ public partial class MainWindow : Window
         {
             _lastQueryKey = "";   // allow the same question again
             _matches.Clear();
-            CountText.Text = "";
             ShowEmpty("No answer", result.Error ?? "Search failed.");
             if (result.Error?.StartsWith("Cannot reach") == true) _ = LoadMetaAsync();
             return;
@@ -567,7 +571,6 @@ public partial class MainWindow : Window
         if (!data.Query.InCorpus) bits.Add("map not indexed, analysed from its file");
         SummaryText.Text = string.Join(" · ", bits);
         SummaryText.Visibility = bits.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
-        CountText.Text = data.Count.ToString(Fmt.Inv);
 
         _matches.Clear();
         foreach (var m in data.Matches) _matches.Add(new MatchVm(m));
@@ -661,14 +664,17 @@ public partial class MainWindow : Window
 
     private static Match? MatchOf(object sender) => (sender as FrameworkElement)?.DataContext is MatchVm vm ? vm.Model : null;
 
-    private void Direct_Click(object sender, RoutedEventArgs e)
+    private void Osu_Click(object sender, RoutedEventArgs e)
     {
-        if (MatchOf(sender) is { } m) Open(m.UrlDirect);
+        if (MatchOf(sender) is { } m) Open(MatchVm.OsuTarget == "web" ? m.UrlWeb : m.UrlDirect);
     }
 
-    private void Web_Click(object sender, RoutedEventArgs e)
+    private void OsuTarget_Changed(object sender, SelectionChangedEventArgs e)
     {
-        if (MatchOf(sender) is { } m) Open(m.UrlWeb);
+        MatchVm.OsuTarget = (OsuTargetBox.SelectedItem as ComboBoxItem)?.Tag as string == "web" ? "web" : "game";
+        _settings.OsuButton = MatchVm.OsuTarget;
+        foreach (var vm in _matches) vm.RefreshOsuHelp();
+        if (_ready) { _saveTimer.Stop(); _saveTimer.Start(); }
     }
 
     private void Pivot_Click(object sender, RoutedEventArgs e)
@@ -798,6 +804,38 @@ public partial class MainWindow : Window
     {
         DropOverlay.Visibility = Visibility.Collapsed;
         if (DroppedOsu(e) is { } path) PinFile(path);
+    }
+
+    // ================================================================ updates
+
+    private string? _updateUrl;
+
+    /// <summary>A strip at the top when a newer release is on GitHub. Checked at start, then every six hours.</summary>
+    private async Task CheckForUpdateAsync()
+    {
+        while (true)
+        {
+            var update = await Updates.CheckAsync(_api.Http);
+            if (update is not null && update.Version != _settings.DismissedVersion)
+            {
+                _updateUrl = update.Url;
+                UpdateText.Text = $"MapMatcher {update.Version} is out.";
+                UpdateBanner.Visibility = Visibility.Visible;
+            }
+            await Task.Delay(TimeSpan.FromHours(6));
+        }
+    }
+
+    private void Update_Click(object sender, RoutedEventArgs e)
+    {
+        if (_updateUrl is not null) Open(_updateUrl);
+    }
+
+    private void UpdateDismiss_Click(object sender, RoutedEventArgs e)
+    {
+        UpdateBanner.Visibility = Visibility.Collapsed;
+        _settings.DismissedVersion = UpdateText.Text.Replace("MapMatcher ", "").Replace(" is out.", "");
+        _saveTimer.Stop(); _saveTimer.Start();
     }
 
     // ================================================================ settings panel

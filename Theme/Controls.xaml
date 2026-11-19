@@ -612,6 +612,35 @@
     </Setter>
   </Style>
 
+  <!-- the osu! button on each suggestion: round, neutral, readable -->
+  <Style x:Key="BtnOsu" TargetType="Button">
+    <Setter Property="FocusVisualStyle" Value="{StaticResource FocusRing}" />
+    <Setter Property="Cursor" Value="Hand" />
+    <Setter Property="Width" Value="34" />
+    <Setter Property="Height" Value="34" />
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="Button">
+          <Grid>
+            <Ellipse x:Name="e" Fill="{StaticResource Paper3}" Stroke="{StaticResource RuleStrong}" StrokeThickness="1" />
+            <TextBlock x:Name="t" Text="osu!" FontWeight="SemiBold" FontSize="10.5" Foreground="{StaticResource Ink}"
+                       HorizontalAlignment="Center" VerticalAlignment="Center" Margin="1,0,0,1" />
+          </Grid>
+          <ControlTemplate.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+              <Setter TargetName="e" Property="Fill" Value="{StaticResource Ink}" />
+              <Setter TargetName="e" Property="Stroke" Value="{StaticResource Ink}" />
+              <Setter TargetName="t" Property="Foreground" Value="{StaticResource Paper}" />
+            </Trigger>
+            <Trigger Property="IsPressed" Value="True">
+              <Setter TargetName="e" Property="Fill" Value="{StaticResource PrimaryHover}" />
+            </Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
   <!-- a small neutral tag: map status -->
   <Style x:Key="Tag" TargetType="Border">
     <Setter Property="Background" Value="{StaticResource Paper3}" />

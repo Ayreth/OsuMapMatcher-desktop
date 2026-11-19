@@ -148,9 +148,17 @@ public sealed class MatchVm : Observable
     }
     private bool _thumbAsked;
 
+    /// <summary>"game" or "web": what the osu! button on every row does.</summary>
+    public static string OsuTarget { get; set; } = "game";
+    public string OsuHelp => OsuTarget == "web" ? "Open the beatmap page in the browser" : "Open it in game to download";
+    public void RefreshOsuHelp() => Raise(nameof(OsuHelp));
+
     private async Task LoadThumbAsync(string url)
     {
-        var image = await ImageLoader.LoadAsync(url, 160);
+        // the wide cover fits the row; the square list one is the fallback
+        var wide = url.Replace("list@2x", "cover").Replace("/list.", "/cover.");
+        var image = wide != url ? await ImageLoader.LoadAsync(wide, 420) : null;
+        image ??= await ImageLoader.LoadAsync(url, 200);
         if (image is null) return;
         _thumb = image;
         Raise(nameof(Thumb));
