@@ -129,13 +129,14 @@ jobs:
           iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/MapMatcher.icns"
       - name: Sign (ad hoc)
         # Apple silicon refuses to run code that carries no signature at all.
-        # Each file first, then the bundle, as Avalonia's macOS guide does.
+        # Each file first, then the bundle, as Avalonia's macOS guide does. Not the main executable on its own:
+        # signing it signs the bundle, which needs every other file signed already.
         run: |
           APP=MapMatcher.app
-          find "$APP/Contents/MacOS" -type f | while read -r file; do
+          find "$APP/Contents/MacOS" -type f ! -path "$APP/Contents/MacOS/MapMatcher" | while read -r file; do
             codesign --force --timestamp=none --sign - "$file"
           done
-          codesign --force --deep --timestamp=none --sign - "$APP"
+          codesign --force --timestamp=none --sign - "$APP"
           codesign --verify --deep --verbose=2 "$APP"
       - name: Zip MapMatcher-macos-${{ matrix.arch }}.zip
         run: ditto -c -k --sequesterRsrc --keepParent MapMatcher.app "MapMatcher-macos-${{ matrix.arch }}.zip"
