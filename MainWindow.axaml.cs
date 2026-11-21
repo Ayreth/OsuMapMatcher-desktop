@@ -2,14 +2,21 @@ using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.IO;
 using System.Text.RegularExpressions;
-using System.Windows;
-using System.Windows.Controls;
-using System.Windows.Controls.Primitives;
-using System.Windows.Input;
-using System.Windows.Media;
-using System.Windows.Media.Animation;
-using System.Windows.Media.Imaging;
-using System.Windows.Threading;
+using Avalonia;
+using Avalonia.Animation;
+using Avalonia.Animation.Easings;
+using Avalonia.Controls;
+using Avalonia.Controls.Documents;
+using Avalonia.Controls.Primitives;
+using Avalonia.Input;
+using Avalonia.Input.Platform;
+using Avalonia.Interactivity;
+using Avalonia.Media;
+using Avalonia.Media.Imaging;
+using Avalonia.Platform;
+using Avalonia.Platform.Storage;
+using Avalonia.Styling;
+using Avalonia.Threading;
 using MapMatcher.Core;
 using MapMatcher.Ui;
 using Match = MapMatcher.Core.Match;
@@ -36,7 +43,8 @@ public partial class MainWindow : Window
     private static readonly (double Limit, string Word)[] SteerSteps = [(0.2, "slightly "), (0.4, ""), (double.PositiveInfinity, "much ")];
     private const double SteerMax = 0.5;
 
-    private readonly Settings _settings = Settings.Load();
+    private readonly Settings _settings;
+    private readonly bool _online;
     private readonly ApiClient _api = new();
     private readonly MapFeed _feed;
     private readonly ObservableCollection<SliderRow> _weights = [];
@@ -54,12 +62,22 @@ public partial class MainWindow : Window
     private string _heroImageKey = "";
     private int _searchToken;
     private CancellationTokenSource? _searchCts;
-    private Storyboard? _loading;
     private bool _ready;
 
-    public MainWindow()
+    public MainWindow() : this(Settings.Load(), online: true) { }
+
+    /// <summary>
+    /// <paramref name="online"/> false: no game, no network, nothing saved. For
+    /// rendering the window from made-up data (tests, screenshots).
+    /// </summary>
+    internal MainWindow(Settings settings, bool online)
     {
+        _settings = settings;
+        _online = online;
         InitializeComponent();
+        Icon = new WindowIcon(AssetLoader.Open(new Uri(OperatingSystem.IsWindows()
+            ? "avares://MapMatcher/Assets/app.ico" : "avares://MapMatcher/Assets/icon-256.png")));
+        SetUpChrome();
 
         _feed = new MapFeed(_settings.TosuHost);
         _searchTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(180) };
@@ -75,27 +93,37 @@ public partial class MainWindow : Window
         FiltersList.ItemsSource = _filters;
         SteerList.ItemsSource = _steer;
 
-        Loaded += OnLoaded;
-        Closing += (_, _) => { SaveSettings(); _feed.Dispose(); };
-        StateChanged += (_, _) => OnStateChanged();
-        DragEnter += OnDragEnter;
-        DragOver += OnDragOver;
-        DragLeave += (_, _) => DropOverlay.Visibility = Visibility.Collapsed;
-        Drop += OnDrop;
-        PreviewKeyDown += OnPreviewKeyDown;
+        Opened += OnLoaded;
+        Closing += (_, _) =>
+        {
+            SaveSettings();
+            _feed.Dispose();
+        };
+        AddHandler(DragDrop.DragEnterEvent, OnDragEnter);
+        AddHandler(DragDrop.DragOverEvent, OnDragOver);
+        AddHandler(DragDrop.DragLeaveEvent, (_, _) => DropOverlay.IsVisible = false);
+        AddHandler(DragDrop.DropEvent, OnDrop);
+        // tunnel: seen before a focused control can swallow it, like WPF's PreviewKeyDown
+        AddHandler(KeyDownEvent, OnPreviewKeyDown, RoutingStrategies.Tunnel);
     }
 
     // ================================================================ boot
 
-    private async void OnLoaded(object sender, RoutedEventArgs e)
+    private static string PasteKey => OperatingSystem.IsMacOS() ? "Cmd+V" : "Ctrl+V";
+
+    private static string NoMapText =>
+        $"Open osu!, lazer or Torii and pick a map in song select. You can also drop a .osu file on this window, or paste a beatmap link with {PasteKey}.";
+
+    private async void OnLoaded(object? sender, EventArgs e)
     {
         _ready = true;
         SyncSummaries();
         RenderHeader();
-        ShowEmpty("No map yet", "Open osu!, lazer or Torii and pick a map in song select. You can also drop a .osu file on this window, or paste a beatmap link with Ctrl+V.");
+        ShowEmpty("No map yet", NoMapText);
+        if (!_online) return;
 
-        _feed.StatusChanged += (on, text) => Dispatcher.BeginInvoke(() => SetStatus(on, text));
-        _feed.MapChanged += map => Dispatcher.BeginInvoke(() => OnLiveMap(map));
+        _feed.StatusChanged += (on, text) => Dispatcher.UIThread.Post(() => SetStatus(on, text));
+        _feed.MapChanged += map => Dispatcher.UIThread.Post(() => OnLiveMap(map));
         _feed.Start();
 
         await LoadMetaAsync();
@@ -120,7 +148,7 @@ public partial class MainWindow : Window
 
     private void SetStatus(bool on, string text)
     {
-        StatusDot.Fill = (Brush)FindResource(on ? "Ok" : "Alert");
+        StatusDot.Fill = Res(on ? "Ok" : "Alert");
         StatusText.Text = text;
     }
 
@@ -198,7 +226,7 @@ public partial class MainWindow : Window
             }
         }
         // emptied, not just hidden: a hidden slider still set would filter the list invisibly
-        SteerSection.Visibility = _steer.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        SteerSection.IsVisible = _steer.Count > 0;
     }
 
     private string SteerPhrase(string axis, double amount)
@@ -218,8 +246,8 @@ public partial class MainWindow : Window
         _saveTimer.Start();
     }
 
-    private void Filter_Changed(object sender, RoutedEventArgs e) => SettingChanged();
-    private void Diverge_Changed(object sender, SelectionChangedEventArgs e) => SettingChanged();
+    private void Filter_Changed(object? sender, RoutedEventArgs e) => SettingChanged();
+    private void Diverge_Changed(object? sender, SelectionChangedEventArgs e) => SettingChanged();
     private string Diverge => (DivergeBox.SelectedItem as ComboBoxItem)?.Tag as string ?? "";
 
     /// <summary>A folded panel must still say, at a glance, whether something is off default.</summary>
@@ -245,10 +273,12 @@ public partial class MainWindow : Window
     private void Summary(TextBlock block, List<string> parts, string fallback)
     {
         block.Text = parts.Count > 0 ? string.Join(", ", parts) : fallback;
-        block.Foreground = (Brush)FindResource(parts.Count > 0 ? "Ink" : "Ink3");
+        block.Foreground = Res(parts.Count > 0 ? "Ink" : "Ink3");
     }
 
-    private void ResetWeights_Click(object sender, RoutedEventArgs e)
+    private IBrush? Res(string key) => this.TryFindResource(key, out var value) ? value as IBrush : null;
+
+    private void ResetWeights_Click(object? sender, RoutedEventArgs e)
     {
         _ready = false;
         foreach (var r in _weights) r.Value = r.Default;
@@ -257,7 +287,7 @@ public partial class MainWindow : Window
         SettingChanged();
     }
 
-    private void ResetSteer_Click(object sender, RoutedEventArgs e)
+    private void ResetSteer_Click(object? sender, RoutedEventArgs e)
     {
         _ready = false;
         foreach (var r in _steer) r.Value = 0;
@@ -265,7 +295,7 @@ public partial class MainWindow : Window
         SettingChanged();
     }
 
-    private void ResetFilters_Click(object sender, RoutedEventArgs e)
+    private void ResetFilters_Click(object? sender, RoutedEventArgs e)
     {
         _ready = false;
         foreach (var r in _filters) r.Value = r.Default;
@@ -274,7 +304,7 @@ public partial class MainWindow : Window
         SettingChanged();
     }
 
-    private void Section_Changed(object sender, RoutedEventArgs e)
+    private void Section_Changed(object? sender, RoutedEventArgs e)
     {
         if (sender is not ToggleButton t || t.Tag is not string key) return;
         _settings.OpenSections.Remove(key);
@@ -282,17 +312,17 @@ public partial class MainWindow : Window
         if (_ready) { _saveTimer.Stop(); _saveTimer.Start(); }
     }
 
-    private void OnTop_Changed(object sender, RoutedEventArgs e)
+    private void OnTop_Changed(object? sender, RoutedEventArgs e)
     {
         Topmost = OnTopBox.IsChecked == true;
         _settings.AlwaysOnTop = Topmost;
         if (_ready) { _saveTimer.Stop(); _saveTimer.Start(); }
     }
 
-    private async void ApplyConnection_Click(object sender, RoutedEventArgs e)
+    private async void ApplyConnection_Click(object? sender, RoutedEventArgs e)
     {
-        _settings.TosuHost = TosuClient.Normalise(TosuBox.Text);
-        _settings.ApiOverride = ApiBox.Text.Trim();
+        _settings.TosuHost = TosuClient.Normalise(TosuBox.Text ?? "");
+        _settings.ApiOverride = (ApiBox.Text ?? "").Trim();
         _feed.SetTosuHost(_settings.TosuHost);
         SaveSettings();
         await LoadMetaAsync();
@@ -300,6 +330,8 @@ public partial class MainWindow : Window
 
     private void SaveSettings()
     {
+        // offline (tests, screenshots): the player's real settings file is never touched
+        if (!_online) return;
         foreach (var r in _weights) _settings.Weights[r.Key] = r.Value;
         _settings.Steer = _steer.Where(r => r.IsOff).ToDictionary(r => r.Key, r => r.Value);
         _settings.Diverge = Diverge;
@@ -313,8 +345,10 @@ public partial class MainWindow : Window
         _settings.Maximized = WindowState == WindowState.Maximized;
         if (WindowState == WindowState.Normal)
         {
-            _settings.Width = Width; _settings.Height = Height;
-            _settings.Left = Left; _settings.Top = Top;
+            // kept in device-independent units, as the Windows-only versions did
+            var scale = DesktopScaling > 0 ? DesktopScaling : 1;
+            _settings.Width = ClientSize.Width; _settings.Height = ClientSize.Height;
+            _settings.Left = Position.X / scale; _settings.Top = Position.Y / scale;
         }
         _settings.Save();
     }
@@ -328,16 +362,21 @@ public partial class MainWindow : Window
         }
         Width = Math.Max(MinWidth, _settings.Width);
         Height = Math.Max(MinHeight, _settings.Height);
-        if (_settings.Left is { } left && _settings.Top is { } top
-            && left > SystemParameters.VirtualScreenLeft - 100
-            && top > SystemParameters.VirtualScreenTop - 20
-            && left < SystemParameters.VirtualScreenLeft + SystemParameters.VirtualScreenWidth - 100
-            && top < SystemParameters.VirtualScreenTop + SystemParameters.VirtualScreenHeight - 100)
+        if (_online && _settings.Left is { } left && _settings.Top is { } top)
         {
-            WindowStartupLocation = WindowStartupLocation.Manual;
-            Left = left; Top = top;
+            // only where a screen still is: a monitor may have gone since
+            var scale = DesktopScaling > 0 ? DesktopScaling : 1;
+            var at = new PixelPoint((int)Math.Round(left * scale), (int)Math.Round(top * scale));
+            var onScreen = Screens.All.Any(sc =>
+                at.X > sc.Bounds.X - 100 * scale && at.Y > sc.Bounds.Y - 20 * scale
+                && at.X < sc.Bounds.Right - 100 * scale && at.Y < sc.Bounds.Bottom - 100 * scale);
+            if (onScreen)
+            {
+                WindowStartupLocation = WindowStartupLocation.Manual;
+                Position = at;
+            }
         }
-        if (_settings.Maximized) WindowState = WindowState.Maximized;
+        if (_online && _settings.Maximized) WindowState = WindowState.Maximized;
     }
 
     // ================================================================ source map
@@ -355,7 +394,7 @@ public partial class MainWindow : Window
 
     private bool ActiveSource() => _pinned is not null || _live is not null;
 
-    private void Back_Click(object sender, RoutedEventArgs e)
+    private void Back_Click(object? sender, RoutedEventArgs e)
     {
         _pinned = null;
         _lastQuery = null;
@@ -363,7 +402,7 @@ public partial class MainWindow : Window
         if (_live is null)
         {
             _matches.Clear();
-            ShowEmpty("No map yet", "Open osu!, lazer or Torii and pick a map in song select. You can also drop a .osu file on this window, or paste a beatmap link with Ctrl+V.");
+            ShowEmpty("No map yet", NoMapText);
             SummaryText.Text = "";
             return;
         }
@@ -380,7 +419,7 @@ public partial class MainWindow : Window
 
         if (_pinned is { } p)
         {
-            BackButton.Visibility = _live is not null ? Visibility.Visible : Visibility.Collapsed;
+            BackButton.IsVisible = _live is not null;
             artist = p.Artist; title = p.Title; version = p.Version; mapper = p.Creator;
             stars = p.Stars; bpm = p.Bpm; length = p.LengthS;
             image = p.BackgroundPath ?? Cover(p.CoverUrl);
@@ -388,7 +427,7 @@ public partial class MainWindow : Window
         }
         else if (_live is { } l)
         {
-            BackButton.Visibility = Visibility.Collapsed;
+            BackButton.IsVisible = false;
             artist = l.Artist; title = l.Title; version = l.Version; mapper = l.Mapper;
             stars = l.Stars; bpm = l.Bpm; length = l.LengthS;
             if (l.ModsKnown) mods = string.IsNullOrEmpty(l.Mods) ? (Math.Abs(l.Rate - 1) > 0.01 ? $"×{l.Rate.ToString("0.##", Fmt.Inv)}" : "NM") : l.Mods;
@@ -400,7 +439,7 @@ public partial class MainWindow : Window
         }
         else
         {
-            BackButton.Visibility = Visibility.Collapsed;
+            BackButton.IsVisible = false;
             artist = "Pick a map in song select";
             title = "Waiting for a map"; version = "";
         }
@@ -415,19 +454,20 @@ public partial class MainWindow : Window
 
         HeroArtist.Text = artist;
         HeroTitleRun.Text = title;
-        HeroVersionRun.Text = version.Length > 0 ? $" [{version}]" : "";
-        HeroMapperRun.Text = mapper.Length > 0 ? $"  by {mapper}" : "";
+        // the gaps the WPF layout put between its runs
+        HeroVersionRun.Text = version.Length > 0 ? $"  [{version}]" : " ";
+        HeroMapperRun.Text = mapper.Length > 0 ? $"   by {mapper}" : "";
 
-        HeroStats.Inlines.Clear();
-        HeroMods.Visibility = Visibility.Collapsed;
+        var stats = new InlineCollection();
+        HeroMods.IsVisible = false;
         if (_pinned is not null || _live is not null)
         {
-            var dim = (Brush)FindResource("Ink4");
+            var dim = Res("Ink4");
             void Part(string value, string unit, bool gap)
             {
-                if (gap) HeroStats.Inlines.Add(new System.Windows.Documents.Run("    "));
-                HeroStats.Inlines.Add(new System.Windows.Documents.Run(value));
-                if (unit.Length > 0) HeroStats.Inlines.Add(new System.Windows.Documents.Run(unit) { Foreground = dim, FontSize = 13 });
+                if (gap) stats.Add(new Run("    "));
+                stats.Add(new Run(value));
+                if (unit.Length > 0) stats.Add(new Run(unit) { Foreground = dim, FontSize = 13 });
             }
             Part(stars > 0 ? Fmt.Stars(stars) : "–", "★", false);
             Part(bpm > 0 ? Fmt.Bpm(bpm) : "–", " bpm", true);
@@ -435,11 +475,12 @@ public partial class MainWindow : Window
             if (mods is not null && mods != "NM")
             {
                 HeroModsText.Text = mods;
-                HeroMods.Visibility = Visibility.Visible;
+                HeroMods.IsVisible = true;
             }
         }
+        HeroStats.Inlines = stats;
 
-        HeroNotice.Visibility = notice.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+        HeroNotice.IsVisible = notice.Length > 0;
         HeroNoticeText.Text = notice;
         SetHeroImage(image, imageKey);
     }
@@ -447,16 +488,21 @@ public partial class MainWindow : Window
     private static string? Cover(string? listCover) =>
         listCover?.Replace("list@2x", "cover@2x").Replace("/list.", "/cover.");
 
+    private Transitions? _heroFade;
+
     private async void SetHeroImage(string? source, string? key)
     {
         if (key == _heroImageKey && source is not null) return;
         _heroImageKey = key ?? "";
-        HeroImage.BeginAnimation(OpacityProperty, null);
+        // out at once, in with a fade
+        _heroFade ??= HeroImage.Transitions;
+        HeroImage.Transitions = null;
         HeroImage.Opacity = 0;
-        HeroBrush.ImageSource = null;
+        HeroImage.Fill = null;
+        HeroImage.Transitions = _heroFade;
         if (source is null) return;
 
-        ImageSource? image;
+        Bitmap? image;
         if (source.StartsWith("http", StringComparison.OrdinalIgnoreCase))
             image = await ImageLoader.LoadAsync(source, 1600);
         else
@@ -466,8 +512,8 @@ public partial class MainWindow : Window
         }
         // a newer map may have been picked while this one loaded
         if (image is null || _heroImageKey != (key ?? "")) return;
-        HeroBrush.ImageSource = image;
-        HeroImage.BeginAnimation(OpacityProperty, new DoubleAnimation(0.62, TimeSpan.FromMilliseconds(350)));
+        HeroImage.Fill = new ImageBrush(image) { Stretch = Stretch.UniformToFill, AlignmentY = AlignmentY.Center };
+        HeroImage.Opacity = 0.62;
     }
 
     // ================================================================ search
@@ -505,7 +551,7 @@ public partial class MainWindow : Window
 
     private async Task SearchAsync()
     {
-        if (!_ready) return;
+        if (!_ready || !_online) return;
         var query = BuildQuery();
         if (query is null)
         {
@@ -570,11 +616,11 @@ public partial class MainWindow : Window
         if (!string.IsNullOrEmpty(data.Variant) && data.Variant != "nomod") bits.Add($"{data.Variant} index");
         if (!data.Query.InCorpus) bits.Add("map not indexed, analysed from its file");
         SummaryText.Text = string.Join(" · ", bits);
-        SummaryText.Visibility = bits.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        SummaryText.IsVisible = bits.Count > 0;
 
         _matches.Clear();
         foreach (var m in data.Matches) _matches.Add(new MatchVm(m));
-        ResultsScroll.ScrollToTop();
+        ResultsScroll.ScrollToHome();
         HideLoading();
 
         if (data.Matches.Count == 0)
@@ -588,10 +634,24 @@ public partial class MainWindow : Window
         }
         else
         {
-            EmptyPanel.Visibility = Visibility.Collapsed;
-            ResultsScroll.Visibility = Visibility.Visible;
+            EmptyPanel.IsVisible = false;
+            ResultsScroll.IsVisible = true;
         }
     }
+
+    /// <summary>Tests and screenshots: a map and an answer, without a game or a server.</summary>
+    internal void ShowPreview(LiveMap map, SimilarResponse data, Meta? meta, string status)
+    {
+        BuildSteer(meta);
+        SyncSummaries();
+        _live = map;
+        _pinned = null;
+        Render(data);
+        SetStatus(true, status);
+    }
+
+    internal IReadOnlyList<MatchVm> Matches => _matches;
+    internal IReadOnlyList<SliderRow> SteerSliders => _steer;
 
     private static PinnedMap FromLabel(PinnedMap p, QueryBlock q)
     {
@@ -607,31 +667,18 @@ public partial class MainWindow : Window
 
     private void ShowLoading()
     {
-        EmptyPanel.Visibility = Visibility.Collapsed;
-        LoadingPanel.Visibility = Visibility.Visible;
+        EmptyPanel.IsVisible = false;
+        LoadingPanel.IsVisible = true;
         ResultsScroll.Opacity = 0.35;
-        if (_loading is null)
-        {
-            _loading = new Storyboard { RepeatBehavior = RepeatBehavior.Forever };
-            var shimmer = new DoubleAnimation(-1, 1, TimeSpan.FromMilliseconds(1400));
-            Storyboard.SetTarget(shimmer, ShimmerText);
-            Storyboard.SetTargetProperty(shimmer, new PropertyPath("Foreground.RelativeTransform.X"));
-            var track = new DoubleAnimation(-72, 240, TimeSpan.FromMilliseconds(1100))
-            {
-                EasingFunction = new SineEase { EasingMode = EasingMode.EaseInOut },
-            };
-            Storyboard.SetTargetName(track, "TrackMove");
-            Storyboard.SetTargetProperty(track, new PropertyPath(TranslateTransform.XProperty));
-            _loading.Children.Add(shimmer);
-            _loading.Children.Add(track);
-        }
-        _loading.Begin(this, true);
+        ShimmerText.Classes.Set("running", true);
+        TrackBar.Classes.Set("running", true);
     }
 
     private void HideLoading()
     {
-        _loading?.Stop(this);
-        LoadingPanel.Visibility = Visibility.Collapsed;
+        ShimmerText.Classes.Set("running", false);
+        TrackBar.Classes.Set("running", false);
+        LoadingPanel.IsVisible = false;
         ResultsScroll.Opacity = 1;
     }
 
@@ -640,36 +687,37 @@ public partial class MainWindow : Window
         HideLoading();
         EmptyTitle.Text = title;
         EmptyText.Text = text;
-        EmptyPanel.Visibility = Visibility.Visible;
-        ResultsScroll.Visibility = _matches.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        EmptyPanel.IsVisible = true;
+        ResultsScroll.IsVisible = _matches.Count > 0;
     }
 
     // ================================================================ rows
 
-    private void Row_Click(object sender, MouseButtonEventArgs e)
+    private void Row_PointerReleased(object? sender, PointerReleasedEventArgs e)
     {
-        if (sender is FrameworkElement { DataContext: MatchVm vm } row)
+        if (e.InitialPressMouseButton != MouseButton.Left) return;
+        if (sender is Control { DataContext: MatchVm vm } row)
         {
             vm.IsOpen = !vm.IsOpen;
             row.Focus();
         }
     }
 
-    private void Row_KeyDown(object sender, KeyEventArgs e)
+    private void Row_KeyDown(object? sender, KeyEventArgs e)
     {
-        if (e.Key is not (Key.Enter or Key.Space) || e.OriginalSource != sender) return;
-        if (sender is FrameworkElement { DataContext: MatchVm vm }) vm.IsOpen = !vm.IsOpen;
+        if (e.Key is not (Key.Enter or Key.Space) || e.Source != sender) return;
+        if (sender is Control { DataContext: MatchVm vm }) vm.IsOpen = !vm.IsOpen;
         e.Handled = true;
     }
 
-    private static Match? MatchOf(object sender) => (sender as FrameworkElement)?.DataContext is MatchVm vm ? vm.Model : null;
+    private static Match? MatchOf(object? sender) => (sender as Control)?.DataContext is MatchVm vm ? vm.Model : null;
 
-    private void Osu_Click(object sender, RoutedEventArgs e)
+    private void Osu_Click(object? sender, RoutedEventArgs e)
     {
         if (MatchOf(sender) is { } m) Open(MatchVm.OsuTarget == "web" ? m.UrlWeb : m.UrlDirect);
     }
 
-    private void OsuTarget_Changed(object sender, SelectionChangedEventArgs e)
+    private void OsuTarget_Changed(object? sender, SelectionChangedEventArgs e)
     {
         MatchVm.OsuTarget = (OsuTargetBox.SelectedItem as ComboBoxItem)?.Tag as string == "web" ? "web" : "game";
         _settings.OsuButton = MatchVm.OsuTarget;
@@ -677,7 +725,7 @@ public partial class MainWindow : Window
         if (_ready) { _saveTimer.Stop(); _saveTimer.Start(); }
     }
 
-    private void Pivot_Click(object sender, RoutedEventArgs e)
+    private void Pivot_Click(object? sender, RoutedEventArgs e)
     {
         if (MatchOf(sender) is not { } m) return;
         _pinned = new PinnedMap(m.Checksum, m.BeatmapId, m.Artist, m.Title, m.Version, m.Creator,
@@ -687,11 +735,31 @@ public partial class MainWindow : Window
         _ = SearchAsync();
     }
 
-    private static void Open(string url)
+    /// <summary>osu:// goes to whichever osu! is installed, https:// to the browser, on every OS.</summary>
+    private void Open(string url)
     {
         if (string.IsNullOrWhiteSpace(url)) return;
         if (!url.StartsWith("osu://") && !url.StartsWith("https://")) return;
-        try { Process.Start(new ProcessStartInfo(url) { UseShellExecute = true }); }
+        if (!_online) { OpenedOffline?.Invoke(url); return; }
+        _ = OpenAsync(url);
+    }
+
+    /// <summary>Offline (tests): what would have been opened.</summary>
+    internal event Action<string>? OpenedOffline;
+
+    private async Task OpenAsync(string url)
+    {
+        try
+        {
+            if (Launcher is { } launcher && await launcher.LaunchUriAsync(new Uri(url))) return;
+        }
+        catch { /* fall back below */ }
+        try
+        {
+            if (OperatingSystem.IsLinux()) Process.Start(new ProcessStartInfo("xdg-open", url) { UseShellExecute = false });
+            else if (OperatingSystem.IsMacOS()) Process.Start(new ProcessStartInfo("open", url) { UseShellExecute = false });
+            else Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+        }
         catch { /* no handler for osu:// when osu! is not installed */ }
     }
 
@@ -701,8 +769,8 @@ public partial class MainWindow : Window
         @"(?:/b/|/beatmaps/|#(?:osu|taiko|fruits|mania)/|/p/beatmap\?b=)(\d+)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
     private static readonly Regex Md5 = new(@"^[0-9a-f]{32}$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
-    /// <summary>Ctrl+V anywhere: a beatmap link, id, checksum or .osu path.</summary>
-    private void OnPreviewKeyDown(object sender, KeyEventArgs e)
+    /// <summary>Paste anywhere (Ctrl+V, Cmd+V on macOS): a beatmap link, id, checksum or .osu path.</summary>
+    private void OnPreviewKeyDown(object? sender, KeyEventArgs e)
     {
         if (e.Key == Key.Escape && SettingsButton.IsChecked == true)
         {
@@ -710,26 +778,43 @@ public partial class MainWindow : Window
             e.Handled = true;
             return;
         }
-        if (e.Key == Key.V && Keyboard.Modifiers == ModifierKeys.Control && Keyboard.FocusedElement is not TextBox)
+        if (IsPaste(e) && FocusManager?.GetFocusedElement() is not TextBox)
         {
-            try
-            {
-                if (Clipboard.ContainsFileDropList())
-                {
-                    var file = Clipboard.GetFileDropList().Cast<string>().FirstOrDefault(f => f.EndsWith(".osu", StringComparison.OrdinalIgnoreCase));
-                    if (file is not null) Lookup(file);
-                }
-                else if (Clipboard.ContainsText()) Lookup(Clipboard.GetText());
-            }
-            catch { /* clipboard busy */ }
             e.Handled = true;
+            _ = PasteAsync();
         }
+    }
+
+    private bool IsPaste(KeyEventArgs e)
+    {
+        var gestures = Application.Current?.PlatformSettings?.HotkeyConfiguration.Paste;
+        if (gestures is { Count: > 0 }) return gestures.Any(g => g.Matches(e));
+        var command = OperatingSystem.IsMacOS() ? KeyModifiers.Meta : KeyModifiers.Control;
+        return e.Key == Key.V && e.KeyModifiers == command;
+    }
+
+    private async Task PasteAsync()
+    {
+        if (Clipboard is not { } clipboard) return;
+        try
+        {
+            // a .osu copied in the file manager comes as a file, anything else as text
+            var files = await clipboard.TryGetFilesAsync();
+            var file = files?.Select(f => f.TryGetLocalPath())
+                             .FirstOrDefault(f => f is not null && f.EndsWith(".osu", StringComparison.OrdinalIgnoreCase));
+            if (file is not null) { Lookup(file); return; }
+            if (files is { Length: > 0 }) return;
+            if (await clipboard.TryGetTextAsync() is { } text) Lookup(text);
+        }
+        catch { /* clipboard busy */ }
     }
 
     private void Lookup(string raw)
     {
         var text = raw.Trim().Trim('"');
         if (text.Length == 0) return;
+        if (text.StartsWith("file://", StringComparison.OrdinalIgnoreCase) && Uri.TryCreate(text, UriKind.Absolute, out var uri))
+            text = uri.LocalPath;
 
         if (File.Exists(text) && text.EndsWith(".osu", StringComparison.OrdinalIgnoreCase)) { PinFile(text); return; }
 
@@ -742,7 +827,7 @@ public partial class MainWindow : Window
         else
         {
             ShowEmpty("Not a beatmap link",
-                "Copy a difficulty link such as osu.ppy.sh/beatmaps/129891, a beatmap id or a .osu file, then press Ctrl+V here.");
+                $"Copy a difficulty link such as osu.ppy.sh/beatmaps/129891, a beatmap id or a .osu file, then press {PasteKey} here.");
             return;
         }
 
@@ -751,7 +836,7 @@ public partial class MainWindow : Window
         _lastQuery = null;
         RenderHeader();
         if (id > 0) { HeroTitleRun.Text = $"Beatmap {id}"; HeroArtist.Text = "Looking it up"; }
-        Keyboard.ClearFocus();
+        FocusManager?.ClearFocus();
         _ = SearchAsync();
     }
 
@@ -782,27 +867,27 @@ public partial class MainWindow : Window
     }
 
     private static string? DroppedOsu(DragEventArgs e) =>
-        e.Data.GetDataPresent(DataFormats.FileDrop) && e.Data.GetData(DataFormats.FileDrop) is string[] files
-            ? files.FirstOrDefault(f => f.EndsWith(".osu", StringComparison.OrdinalIgnoreCase))
-            : null;
+        e.DataTransfer.TryGetFiles()?
+            .Select(f => f.TryGetLocalPath())
+            .FirstOrDefault(f => f is not null && f.EndsWith(".osu", StringComparison.OrdinalIgnoreCase));
 
-    private void OnDragEnter(object sender, DragEventArgs e)
+    private void OnDragEnter(object? sender, DragEventArgs e)
     {
         var ok = DroppedOsu(e) is not null;
-        e.Effects = ok ? DragDropEffects.Copy : DragDropEffects.None;
-        DropOverlay.Visibility = ok ? Visibility.Visible : Visibility.Collapsed;
+        e.DragEffects = ok ? DragDropEffects.Copy : DragDropEffects.None;
+        DropOverlay.IsVisible = ok;
         e.Handled = true;
     }
 
-    private void OnDragOver(object sender, DragEventArgs e)
+    private void OnDragOver(object? sender, DragEventArgs e)
     {
-        e.Effects = DroppedOsu(e) is not null ? DragDropEffects.Copy : DragDropEffects.None;
+        e.DragEffects = DroppedOsu(e) is not null ? DragDropEffects.Copy : DragDropEffects.None;
         e.Handled = true;
     }
 
-    private void OnDrop(object sender, DragEventArgs e)
+    private void OnDrop(object? sender, DragEventArgs e)
     {
-        DropOverlay.Visibility = Visibility.Collapsed;
+        DropOverlay.IsVisible = false;
         if (DroppedOsu(e) is { } path) PinFile(path);
     }
 
@@ -820,62 +905,147 @@ public partial class MainWindow : Window
             {
                 _updateUrl = update.Url;
                 UpdateText.Text = $"MapMatcher {update.Version} is out.";
-                UpdateBanner.Visibility = Visibility.Visible;
+                UpdateBanner.IsVisible = true;
             }
             await Task.Delay(TimeSpan.FromHours(6));
         }
     }
 
-    private void Update_Click(object sender, RoutedEventArgs e)
+    private void Update_Click(object? sender, RoutedEventArgs e)
     {
         if (_updateUrl is not null) Open(_updateUrl);
     }
 
-    private void UpdateDismiss_Click(object sender, RoutedEventArgs e)
+    private void UpdateDismiss_Click(object? sender, RoutedEventArgs e)
     {
-        UpdateBanner.Visibility = Visibility.Collapsed;
-        _settings.DismissedVersion = UpdateText.Text.Replace("MapMatcher ", "").Replace(" is out.", "");
+        UpdateBanner.IsVisible = false;
+        _settings.DismissedVersion = (UpdateText.Text ?? "").Replace("MapMatcher ", "").Replace(" is out.", "");
         _saveTimer.Stop(); _saveTimer.Start();
+    }
+
+    /// <summary>For screenshots and tests: the update strip as a release would show it.</summary>
+    internal void ShowUpdate(string version)
+    {
+        UpdateText.Text = $"MapMatcher {version} is out.";
+        UpdateBanner.IsVisible = true;
     }
 
     // ================================================================ settings panel
 
-    private void Settings_Toggled(object sender, RoutedEventArgs e)
+    private CancellationTokenSource? _slide;
+
+    private async void Settings_Toggled(object? sender, RoutedEventArgs e)
     {
         var open = SettingsButton.IsChecked == true;
-        SettingsPanel.Width = Math.Min(400, Math.Max(320, ActualWidth - 24));
-        var ease = new ExponentialEase { EasingMode = EasingMode.EaseOut, Exponent = 6 };
+        SettingsPanel.Width = Math.Min(400, Math.Max(320, Bounds.Width - 24));
+        _slide?.Cancel();
+        var cts = _slide = new CancellationTokenSource();
+        var transform = (TranslateTransform)SettingsPanel.RenderTransform!;
+        var from = transform.X;
         if (open)
         {
-            SettingsLayer.Visibility = Visibility.Visible;
-            SettingsSlide.BeginAnimation(TranslateTransform.XProperty,
-                new DoubleAnimation(SettingsPanel.Width, 0, TimeSpan.FromMilliseconds(250)) { EasingFunction = ease });
-            SettingsScrim.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(180)));
+            if (!SettingsLayer.IsVisible) from = SettingsPanel.Width;
+            SettingsLayer.IsVisible = true;
+            await Task.WhenAll(
+                Slide(SettingsPanel, from, 0, 250, cts.Token),
+                Fade(SettingsScrim, SettingsScrim.Opacity < 1 && from > 0 ? 0 : SettingsScrim.Opacity, 1, 180, cts.Token));
         }
         else
         {
-            var slide = new DoubleAnimation(0, SettingsPanel.Width, TimeSpan.FromMilliseconds(180)) { EasingFunction = ease };
-            slide.Completed += (_, _) => { if (SettingsButton.IsChecked != true) SettingsLayer.Visibility = Visibility.Collapsed; };
-            SettingsSlide.BeginAnimation(TranslateTransform.XProperty, slide);
-            SettingsScrim.BeginAnimation(OpacityProperty, new DoubleAnimation(1, 0, TimeSpan.FromMilliseconds(180)));
+            await Task.WhenAll(
+                Slide(SettingsPanel, from, SettingsPanel.Width, 180, cts.Token),
+                Fade(SettingsScrim, SettingsScrim.Opacity, 0, 180, cts.Token));
+            if (!cts.IsCancellationRequested && SettingsButton.IsChecked != true) SettingsLayer.IsVisible = false;
         }
     }
 
-    private void Scrim_Click(object sender, MouseButtonEventArgs e) => SettingsButton.IsChecked = false;
+    private static Task Slide(Control target, double from, double to, int ms, CancellationToken ct) =>
+        Run(target, TranslateTransform.XProperty, from, to, ms, new ExponentialEaseOut(), ct);
+
+    private static Task Fade(Control target, double from, double to, int ms, CancellationToken ct) =>
+        Run(target, OpacityProperty, from, to, ms, new LinearEasing(), ct);
+
+    private static async Task Run(Control target, AvaloniaProperty property, double from, double to, int ms, Easing easing,
+                                  CancellationToken ct)
+    {
+        var animation = new Animation
+        {
+            Duration = TimeSpan.FromMilliseconds(ms),
+            Easing = easing,
+            FillMode = FillMode.Forward,
+            Children =
+            {
+                new KeyFrame { Cue = new Cue(0), Setters = { new Setter(property, from) } },
+                new KeyFrame { Cue = new Cue(1), Setters = { new Setter(property, to) } },
+            },
+        };
+        await animation.RunAsync(target, ct);
+        // keep the end value once the animation lets go of it
+        if (ct.IsCancellationRequested) return;
+        if (property == OpacityProperty) target.Opacity = to;
+        else if (target.RenderTransform is TranslateTransform t) t.X = to;
+    }
+
+    private void Scrim_PointerPressed(object? sender, PointerPressedEventArgs e) => SettingsButton.IsChecked = false;
 
     // ================================================================ window chrome
 
-    private void Minimize_Click(object sender, RoutedEventArgs e) => WindowState = WindowState.Minimized;
+    /// <summary>
+    /// Windows: no system title bar, ours instead (the top bar moves the window,
+    /// the buttons on the right replace the system ones). Linux and macOS keep
+    /// their native decorations, which their window managers handle best.
+    /// </summary>
+    private void SetUpChrome()
+    {
+        var custom = OperatingSystem.IsWindows();
+        CaptionButtons.IsVisible = custom;
+        if (custom)
+        {
+            ExtendClientAreaToDecorationsHint = true;
+            ExtendClientAreaChromeHints = ExtendClientAreaChromeHints.NoChrome;
+            ExtendClientAreaTitleBarHeightHint = -1;
+        }
+        else
+        {
+            // the paste shortcut the footer names is Cmd+V on macOS
+            FooterText.Text = FooterText.Text?.Replace("Ctrl+V", PasteKey);
+        }
+        if (OperatingSystem.IsMacOS())
+            ConnectionHelp.Text = "Nothing else has to run for lazer and Torii: they are followed through their log and a copy of their beatmap database, never written to. osu!stable cannot be read on macOS: open tosu and it is used instead.";
+    }
 
-    private void Maximize_Click(object sender, RoutedEventArgs e) =>
+    private void TitleBar_PointerPressed(object? sender, PointerPressedEventArgs e)
+    {
+        if (!e.GetCurrentPoint(this).Properties.IsLeftButtonPressed) return;
+        // a double click maximises, as on a system title bar; the move loop would swallow a DoubleTapped
+        if (e.ClickCount == 2 && CaptionButtons.IsVisible)
+        {
+            Maximize_Click(sender, e);
+            e.Handled = true;
+            return;
+        }
+        BeginMoveDrag(e);
+    }
+
+    private void Minimize_Click(object? sender, RoutedEventArgs e) => WindowState = WindowState.Minimized;
+
+    private void Maximize_Click(object? sender, RoutedEventArgs e) =>
         WindowState = WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized;
 
-    private void Close_Click(object sender, RoutedEventArgs e) => Close();
+    private void Close_Click(object? sender, RoutedEventArgs e) => Close();
+
+    protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
+    {
+        base.OnPropertyChanged(change);
+        if (change.Property == WindowStateProperty || change.Property == OffScreenMarginProperty) OnStateChanged();
+    }
 
     private void OnStateChanged()
     {
-        // a maximised chrome-less window overhangs the screen by the resize border
-        Root.Margin = WindowState == WindowState.Maximized ? new Thickness(7) : new Thickness(0);
-        MaxIcon.Data = (Geometry)FindResource(WindowState == WindowState.Maximized ? "IconRestore" : "IconSquare");
+        if (Root is null || MaxIcon is null) return;
+        // a maximised window without a system frame overhangs the screen by its border
+        Root.Margin = WindowState == WindowState.Maximized ? OffScreenMargin : default;
+        MaxIcon.Data = this.TryFindResource(WindowState == WindowState.Maximized ? "IconRestore" : "IconSquare", out var icon)
+            ? icon as Geometry : null;
     }
 }

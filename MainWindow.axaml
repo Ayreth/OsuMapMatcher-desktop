@@ -1,0 +1,510 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:ui="using:MapMatcher.Ui"
+        x:Class="MapMatcher.MainWindow"
+        Title="MapMatcher" Width="560" Height="780" MinWidth="420" MinHeight="520"
+        Background="{StaticResource Paper}" Foreground="{StaticResource Ink2}"
+        FontFamily="{StaticResource Sans}" FontSize="{StaticResource TextMd}"
+        DragDrop.AllowDrop="True" WindowStartupLocation="CenterScreen">
+
+  <Window.Styles>
+    <!-- a suggestion row lights up under the pointer and while open -->
+    <Style Selector="Border.row">
+      <Setter Property="Background" Value="Transparent" />
+    </Style>
+    <Style Selector="Border.row:pointerover">
+      <Setter Property="Background" Value="{StaticResource Paper2}" />
+    </Style>
+    <Style Selector="Border.row.open">
+      <Setter Property="Background" Value="{StaticResource Paper2}" />
+    </Style>
+    <Style Selector="ui|Icon.chev">
+      <Setter Property="Foreground" Value="{StaticResource Ink4}" />
+    </Style>
+    <Style Selector="Border.row:pointerover ui|Icon.chev">
+      <Setter Property="Foreground" Value="{StaticResource Ink2}" />
+    </Style>
+    <Style Selector="Border.row.open ui|Icon.chev">
+      <Setter Property="Foreground" Value="{StaticResource Ink}" />
+      <Setter Property="RenderTransform" Value="rotate(180deg)" />
+    </Style>
+
+    <!-- the steer phrase: quiet when straight, white when it asks for something -->
+    <Style Selector="TextBlock.steerword">
+      <Setter Property="Foreground" Value="{StaticResource Ink4}" />
+    </Style>
+    <Style Selector="TextBlock.steerword.off">
+      <Setter Property="Foreground" Value="{StaticResource Ink}" />
+    </Style>
+
+    <!-- loading: shimmer text and a 2 px track, no spinner -->
+    <Style Selector="ui|ShimmerText.running">
+      <Style.Animations>
+        <Animation Duration="0:0:1.4" IterationCount="Infinite">
+          <KeyFrame Cue="0%">
+            <Setter Property="Phase" Value="-1" />
+          </KeyFrame>
+          <KeyFrame Cue="100%">
+            <Setter Property="Phase" Value="1" />
+          </KeyFrame>
+        </Animation>
+      </Style.Animations>
+    </Style>
+    <Style Selector="Border#TrackBar.running">
+      <Style.Animations>
+        <Animation Duration="0:0:1.4" IterationCount="Infinite">
+          <KeyFrame Cue="0%">
+            <Setter Property="TranslateTransform.X" Value="-72" />
+          </KeyFrame>
+          <KeyFrame Cue="78%" KeySpline="0.37,0,0.63,1">
+            <Setter Property="TranslateTransform.X" Value="240" />
+          </KeyFrame>
+          <KeyFrame Cue="100%">
+            <Setter Property="TranslateTransform.X" Value="240" />
+          </KeyFrame>
+        </Animation>
+      </Style.Animations>
+    </Style>
+  </Window.Styles>
+
+  <Window.Resources>
+    <!-- slider row: label, rail, value -->
+    <DataTemplate x:Key="SliderRowTemplate" x:DataType="ui:SliderRow">
+      <Grid Margin="0,4" ColumnDefinitions="104,*,52">
+        <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Background="Transparent"
+                    ToolTip.Tip="{Binding Help}" ToolTip.ShowDelay="250">
+          <Border Width="8" Height="8" CornerRadius="2" Background="{Binding Swatch}" Margin="0,0,8,0"
+                  IsVisible="{Binding HasSwatch}" />
+          <TextBlock Text="{Binding Label}" Foreground="{StaticResource Ink2}" FontSize="{StaticResource TextSm}" />
+        </StackPanel>
+        <Slider Grid.Column="1" Minimum="{Binding Min}" Maximum="{Binding Max}" TickFrequency="{Binding Step}"
+                SmallChange="{Binding Step}" LargeChange="{Binding Step}" Value="{Binding Value, Mode=TwoWay}"
+                AutomationProperties.Name="{Binding Label}" VerticalAlignment="Center" />
+        <TextBlock Grid.Column="2" Text="{Binding Display}" Theme="{StaticResource MonoValue}" FontSize="{StaticResource TextSm}"
+                   HorizontalAlignment="Right" VerticalAlignment="Center" />
+      </Grid>
+    </DataTemplate>
+
+    <!-- steer row: centred rail, the asked phrase on the right -->
+    <DataTemplate x:Key="SteerRowTemplate" x:DataType="ui:SliderRow">
+      <Grid Margin="0,4" ColumnDefinitions="104,*,112">
+        <TextBlock Text="{Binding Label}" Foreground="{StaticResource Ink2}" FontSize="{StaticResource TextSm}" VerticalAlignment="Center"
+                   Background="Transparent" ToolTip.Tip="{Binding Help}" ToolTip.ShowDelay="250" />
+        <Slider Grid.Column="1" Theme="{StaticResource SliderCentered}" Minimum="{Binding Min}" Maximum="{Binding Max}"
+                TickFrequency="{Binding Step}" SmallChange="{Binding Step}" LargeChange="{Binding Step}"
+                Value="{Binding Value, Mode=TwoWay}" AutomationProperties.Name="{Binding Label}" VerticalAlignment="Center" />
+        <TextBlock Grid.Column="2" Classes="steerword" Classes.off="{Binding IsOff}" Text="{Binding Display}"
+                   FontSize="{StaticResource TextXs}" TextAlignment="Right" VerticalAlignment="Center"
+                   TextTrimming="CharacterEllipsis" Margin="8,0,0,0" />
+      </Grid>
+    </DataTemplate>
+
+    <!-- one suggestion: a rule-separated row, details fold out below -->
+    <DataTemplate x:Key="MatchTemplate" x:DataType="ui:MatchVm">
+      <Border Classes="row" Classes.open="{Binding IsOpen}" BorderBrush="{StaticResource Rule}" BorderThickness="0,0,0,1"
+              Focusable="True" FocusAdorner="{StaticResource FocusRing}" Cursor="Hand"
+              PointerReleased="Row_PointerReleased" KeyDown="Row_KeyDown">
+        <StackPanel>
+          <Grid>
+            <!-- the cover sits on the left and fades into the row -->
+            <Rectangle Width="210" HorizontalAlignment="Left" IsHitTestVisible="False" Opacity="0.22" Fill="{Binding Thumb}">
+              <Rectangle.OpacityMask>
+                <LinearGradientBrush StartPoint="0%,0%" EndPoint="100%,0%">
+                  <GradientStop Color="#FF000000" Offset="0" />
+                  <GradientStop Color="#B3000000" Offset="0.4" />
+                  <GradientStop Color="#00000000" Offset="1" />
+                </LinearGradientBrush>
+              </Rectangle.OpacityMask>
+            </Rectangle>
+            <Grid Margin="96,14,16,14" ColumnDefinitions="*,Auto,58,26">
+              <StackPanel VerticalAlignment="Center" Margin="0,0,10,0">
+                <TextBlock Text="{Binding Name}" Foreground="{StaticResource Ink}" FontWeight="Medium" FontSize="{StaticResource TextMd}"
+                           TextTrimming="CharacterEllipsis" />
+                <TextBlock TextTrimming="CharacterEllipsis" FontSize="{StaticResource TextSm}" Margin="0,3,0,0">
+                  <Run Text="{Binding Version, Mode=OneWay}" Foreground="{StaticResource Ink2}" /><Run Text="  · " Foreground="{StaticResource Ink4}" /><Run Text="{Binding Creator, Mode=OneWay}" Foreground="{StaticResource Ink3}" />
+                </TextBlock>
+                <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                  <TextBlock Theme="{StaticResource MonoValue}" FontSize="{StaticResource TextXs}" Foreground="{StaticResource Ink2}"
+                             VerticalAlignment="Center">
+                    <Run Text="{Binding Stars, Mode=OneWay}" /><Run Text="★" Foreground="{StaticResource Ink4}" /><Run Text="   " /><Run Text="{Binding Bpm, Mode=OneWay}" /><Run Text=" bpm" Foreground="{StaticResource Ink4}" /><Run Text="   " /><Run Text="{Binding Length, Mode=OneWay}" />
+                  </TextBlock>
+                  <Border Theme="{StaticResource Tag}" Margin="10,0,0,0" ToolTip.Tip="{Binding StatusHelp}"
+                          IsVisible="{Binding HasStatusTag}">
+                    <TextBlock Text="{Binding StatusTag}" FontFamily="{StaticResource Mono}" FontSize="{StaticResource Text2xs}"
+                               Foreground="{StaticResource Ink3}" />
+                  </Border>
+                </StackPanel>
+              </StackPanel>
+              <!-- osu! button: in game or in the browser, per the setting -->
+              <Button Grid.Column="1" Theme="{StaticResource BtnOsu}" Click="Osu_Click" VerticalAlignment="Center" Margin="0,0,14,0"
+                      ToolTip.Tip="{Binding OsuHelp}" AutomationProperties.Name="Open in osu!" />
+              <StackPanel Grid.Column="2" VerticalAlignment="Center" HorizontalAlignment="Right" Background="Transparent"
+                          ToolTip.Tip="How closely it plays like your map">
+                <TextBlock Theme="{StaticResource MonoValue}" HorizontalAlignment="Right" FontSize="17">
+                  <Run Text="{Binding MatchPct, Mode=OneWay}" /><Run Text="%" Foreground="{StaticResource Ink4}" FontSize="{StaticResource TextXs}" />
+                </TextBlock>
+                <Grid Width="40" Height="2" Margin="0,6,0,0" HorizontalAlignment="Right">
+                  <Border Background="{StaticResource RuleStrong}" CornerRadius="1" />
+                  <Border Background="{StaticResource Ink2}" CornerRadius="1" Width="{Binding MatchFill}" HorizontalAlignment="Left" />
+                </Grid>
+              </StackPanel>
+              <ui:Icon Classes="chev" Grid.Column="3" Data="{StaticResource IconChevronDown}" Width="15" Height="15"
+                       HorizontalAlignment="Right" VerticalAlignment="Center" />
+            </Grid>
+          </Grid>
+
+          <!-- why this map -->
+          <Border IsVisible="{Binding IsOpen}" Padding="24,4,18,18">
+            <StackPanel>
+              <DockPanel>
+                <TextBlock DockPanel.Dock="Right" Theme="{StaticResource MonoValue}" FontSize="{StaticResource TextXs}" Foreground="{StaticResource Ink4}">
+                  <Run Text="distance " /><Run Text="{Binding Distance, Mode=OneWay}" Foreground="{StaticResource Ink2}" />
+                </TextBlock>
+                <TextBlock Text="Where the distance comes from" Theme="{StaticResource Label}" />
+              </DockPanel>
+              <ui:ShareBarView Bars="{Binding Bars}" Margin="0,8,0,0" />
+              <ItemsControl ItemsSource="{Binding Bars}" Margin="0,8,0,0">
+                <ItemsControl.ItemsPanel>
+                  <ItemsPanelTemplate>
+                    <WrapPanel />
+                  </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate x:DataType="ui:ShareBar">
+                    <StackPanel Orientation="Horizontal" Margin="0,0,16,4">
+                      <Border Width="8" Height="8" CornerRadius="2" Background="{Binding Brush}" Margin="0,0,6,0" />
+                      <TextBlock FontSize="{StaticResource TextXs}">
+                        <Run Text="{Binding Label, Mode=OneWay}" Foreground="{StaticResource Ink3}" /><Run Text=" " /><Run Text="{Binding Pct, Mode=OneWay}" FontFamily="{StaticResource Mono}" Foreground="{StaticResource Ink2}" />
+                      </TextBlock>
+                    </StackPanel>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+
+              <Grid Margin="0,12,0,0" ColumnDefinitions="64,*" RowDefinitions="Auto,Auto,Auto">
+                <TextBlock Text="Differs" Theme="{StaticResource Label}" Margin="0,1,0,0" IsVisible="{Binding HasWhyDifferent}" />
+                <TextBlock Grid.Column="1" Text="{Binding WhyDifferent}" Foreground="{StaticResource Ink}" TextWrapping="Wrap"
+                           FontSize="{StaticResource TextSm}" LineHeight="20" IsVisible="{Binding HasWhyDifferent}" />
+                <TextBlock Grid.Row="1" Text="Same" Theme="{StaticResource Label}" Margin="0,7,0,0" IsVisible="{Binding HasWhySame}" />
+                <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding WhySame}" Foreground="{StaticResource Ink3}" TextWrapping="Wrap"
+                           FontSize="{StaticResource TextSm}" LineHeight="20" Margin="0,6,0,0" IsVisible="{Binding HasWhySame}" />
+                <TextBlock Grid.Row="2" Grid.ColumnSpan="2" Text="No notable difference." Foreground="{StaticResource Ink3}"
+                           FontSize="{StaticResource TextSm}" IsVisible="{Binding NoWhy}" />
+              </Grid>
+
+              <WrapPanel Margin="0,14,0,0">
+                <Button Theme="{StaticResource BtnQuiet}" Click="Pivot_Click" Margin="0,0,8,8"
+                        ToolTip.Tip="Search from this map instead, without touching the game.">
+                  <StackPanel Orientation="Horizontal">
+                    <ui:Icon Data="{StaticResource IconCrosshair}" Margin="0,0,8,0" />
+                    <TextBlock Text="Maps like this one" />
+                  </StackPanel>
+                </Button>
+              </WrapPanel>
+            </StackPanel>
+          </Border>
+        </StackPanel>
+      </Border>
+    </DataTemplate>
+  </Window.Resources>
+
+  <Grid x:Name="Root" RowDefinitions="52,Auto,*">
+
+    <!-- ================= hero background: the map you search from ================= -->
+    <Grid Grid.Row="0" Grid.RowSpan="2" ClipToBounds="True">
+      <!-- a brush, not an Image: a picture must never size the layout -->
+      <Rectangle x:Name="HeroImage" Opacity="0">
+        <Rectangle.Transitions>
+          <Transitions>
+            <DoubleTransition Property="Opacity" Duration="0:0:0.35" />
+          </Transitions>
+        </Rectangle.Transitions>
+      </Rectangle>
+      <Border Background="#8C0A0A0C" />
+      <Border>
+        <Border.Background>
+          <LinearGradientBrush StartPoint="0%,100%" EndPoint="0%,0%">
+            <GradientStop Color="#FF0A0A0C" Offset="0" />
+            <GradientStop Color="#B30A0A0C" Offset="0.4" />
+            <GradientStop Color="#330A0A0C" Offset="1" />
+          </LinearGradientBrush>
+        </Border.Background>
+      </Border>
+    </Grid>
+
+    <!-- ================= top bar: its empty part moves the window ================= -->
+    <Border x:Name="TitleBar" Grid.Row="0" Background="Transparent"
+            PointerPressed="TitleBar_PointerPressed" />
+    <Grid Grid.Row="0" ColumnDefinitions="*,Auto">
+      <TextBlock Text="MapMatcher" FontFamily="{StaticResource Serif}" FontSize="25" Foreground="{StaticResource Ink}"
+                 VerticalAlignment="Bottom" Margin="24,0,0,0" IsHitTestVisible="False" />
+
+      <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Top">
+        <!-- settings: a real button, readable over any background -->
+        <ToggleButton x:Name="SettingsButton" Theme="{StaticResource SettingsToggle}" ToolTip.Tip="Weights, steer, filters"
+                      Margin="0,8,10,0" VerticalAlignment="Top" IsCheckedChanged="Settings_Toggled" />
+        <!-- drawn here on Windows only: Linux and macOS keep their own title bar -->
+        <StackPanel x:Name="CaptionButtons" Orientation="Horizontal">
+          <Button Theme="{StaticResource BtnCaption}" Click="Minimize_Click" ToolTip.Tip="Minimize">
+            <ui:Icon Data="{StaticResource IconMinus}" Width="14" Height="14" Stroke="1.5" />
+          </Button>
+          <Button Theme="{StaticResource BtnCaption}" Click="Maximize_Click" ToolTip.Tip="Maximize">
+            <ui:Icon x:Name="MaxIcon" Data="{StaticResource IconSquare}" Width="13" Height="13" Stroke="1.5" />
+          </Button>
+          <Button Theme="{StaticResource BtnClose}" Click="Close_Click" ToolTip.Tip="Close">
+            <ui:Icon Data="{StaticResource IconX}" Width="14" Height="14" Stroke="1.5" />
+          </Button>
+        </StackPanel>
+      </StackPanel>
+    </Grid>
+
+    <!-- ================= hero content ================= -->
+    <Grid Grid.Row="1" MinHeight="236">
+      <StackPanel VerticalAlignment="Bottom" Margin="24,12,24,48">
+        <!-- a new release: a quiet strip, not a popup -->
+        <Border x:Name="UpdateBanner" IsVisible="False" Background="#E6161619" BorderBrush="{StaticResource RuleStrong}"
+                BorderThickness="1" CornerRadius="{StaticResource RadiusControl}" Padding="12,6,6,6" Margin="0,0,0,18">
+          <Grid ColumnDefinitions="*,Auto,Auto">
+            <TextBlock x:Name="UpdateText" Foreground="{StaticResource Ink}" FontSize="{StaticResource TextSm}" VerticalAlignment="Center"
+                       TextWrapping="Wrap" Text="A new version is out." />
+            <Button Grid.Column="1" Theme="{StaticResource BtnPrimary}" Height="28" Padding="10,0" FontSize="{StaticResource TextSm}"
+                    Margin="10,0,4,0" Click="Update_Click" Content="Download" />
+            <Button Grid.Column="2" Theme="{StaticResource BtnSm}" Width="28" Padding="0" Click="UpdateDismiss_Click" ToolTip.Tip="Not now">
+              <ui:Icon Data="{StaticResource IconX}" Width="13" Height="13" />
+            </Button>
+          </Grid>
+        </Border>
+
+        <Button x:Name="BackButton" Theme="{StaticResource BtnLink}" Click="Back_Click" HorizontalAlignment="Left"
+                Margin="0,0,0,14" IsVisible="False" FontSize="{StaticResource TextMd}">
+          <StackPanel Orientation="Horizontal">
+            <ui:Icon Data="{StaticResource IconArrowLeft}" Margin="0,0,10,0" />
+            <TextBlock Text="Back to the map selected in game" />
+          </StackPanel>
+        </Button>
+
+        <TextBlock x:Name="HeroArtist" Text="" Foreground="{StaticResource Ink2}" FontSize="{StaticResource TextBase}"
+                   TextTrimming="CharacterEllipsis" />
+        <!-- lines closer than the font's own height: the padding keeps the last line's descenders from being cut -->
+        <TextBlock x:Name="HeroTitle" FontFamily="{StaticResource Serif}" FontSize="40" LineHeight="42"
+                   Foreground="{StaticResource Ink}" TextWrapping="Wrap" TextTrimming="CharacterEllipsis" MaxLines="3"
+                   Padding="0,0,0,12" Margin="0,4,0,-12">
+          <Run x:Name="HeroTitleRun" Text="Waiting for a map" /><Run x:Name="HeroVersionRun" Text="" FontStyle="Italic" Foreground="{StaticResource Ink3}" /><Run x:Name="HeroMapperRun" Text="" FontFamily="{StaticResource Sans}" FontSize="16" Foreground="{StaticResource Ink3}" />
+        </TextBlock>
+
+        <StackPanel Orientation="Horizontal" Margin="0,18,0,0">
+          <TextBlock x:Name="HeroStats" Theme="{StaticResource MonoValue}" FontSize="17" VerticalAlignment="Center" />
+          <Border x:Name="HeroMods" Theme="{StaticResource Tag}" Margin="14,0,0,0" IsVisible="False">
+            <TextBlock x:Name="HeroModsText" FontFamily="{StaticResource Mono}" FontSize="{StaticResource TextXs}" Foreground="{StaticResource Ink2}" />
+          </Border>
+        </StackPanel>
+        <Border x:Name="HeroNotice" Margin="0,10,0,0" IsVisible="False" HorizontalAlignment="Left"
+                Background="{StaticResource WarnSoft}" CornerRadius="{StaticResource RadiusChip}" Padding="8,3">
+          <StackPanel Orientation="Horizontal">
+            <Ellipse Width="7" Height="7" Fill="{StaticResource Warn}" VerticalAlignment="Center" Margin="0,0,8,0" />
+            <TextBlock x:Name="HeroNoticeText" FontFamily="{StaticResource Mono}" FontSize="{StaticResource TextXs}" Foreground="{StaticResource Warn}" />
+          </StackPanel>
+        </Border>
+      </StackPanel>
+    </Grid>
+
+    <!-- ================= results ================= -->
+    <Grid Grid.Row="2" RowDefinitions="Auto,*">
+      <Border BorderBrush="{StaticResource Rule}" BorderThickness="0,1,0,0">
+        <TextBlock x:Name="SummaryText" Text="" Foreground="{StaticResource Ink3}" FontSize="{StaticResource TextSm}"
+                   Margin="24,10,24,10" TextWrapping="Wrap" IsVisible="False" />
+      </Border>
+
+      <ScrollViewer x:Name="ResultsScroll" Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+                    Focusable="False">
+        <ItemsControl x:Name="ResultsList" ItemTemplate="{StaticResource MatchTemplate}" Focusable="False" Margin="0,8,0,0" />
+      </ScrollViewer>
+
+      <!-- loading: shimmer text and a 2 px track, no spinner -->
+      <StackPanel x:Name="LoadingPanel" Grid.Row="1" Margin="24,24,24,0" IsVisible="False" VerticalAlignment="Top">
+        <ui:ShimmerText x:Name="ShimmerText" Text="Finding maps that play like this one" FontSize="{StaticResource TextMd}"
+                        BaseColor="{StaticResource Ink3Color}" GlowColor="{StaticResource InkColor}" HorizontalAlignment="Left" />
+        <Grid Height="2" Width="240" HorizontalAlignment="Left" Margin="0,14,0,0" ClipToBounds="True">
+          <Border Background="{StaticResource Rule}" />
+          <Border x:Name="TrackBar" Width="72" Background="{StaticResource Ink3}" HorizontalAlignment="Left">
+            <Border.RenderTransform>
+              <TranslateTransform X="-72" />
+            </Border.RenderTransform>
+          </Border>
+        </Grid>
+      </StackPanel>
+
+      <!-- empty / error -->
+      <StackPanel x:Name="EmptyPanel" Grid.Row="1" Margin="24,24,24,0" VerticalAlignment="Top">
+        <TextBlock x:Name="EmptyTitle" Text="No map yet" Foreground="{StaticResource Ink}" FontSize="{StaticResource TextBase}"
+                   FontWeight="Medium" />
+        <TextBlock x:Name="EmptyText" Foreground="{StaticResource Ink3}" FontSize="{StaticResource TextMd}" TextWrapping="Wrap"
+                   LineHeight="21" Margin="0,6,0,0" />
+      </StackPanel>
+    </Grid>
+
+    <!-- ================= settings: a panel over the list, opened from the top bar ================= -->
+    <Grid x:Name="SettingsLayer" Grid.Row="1" Grid.RowSpan="2" IsVisible="False">
+      <Border x:Name="SettingsScrim" Background="#990A0A0C" PointerPressed="Scrim_PointerPressed" />
+      <Border x:Name="SettingsPanel" HorizontalAlignment="Right" Width="400" Background="{StaticResource Paper2}"
+              BorderBrush="{StaticResource RuleStrong}" BorderThickness="1,1,0,0">
+        <Border.RenderTransform>
+          <TranslateTransform X="0" />
+        </Border.RenderTransform>
+        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Focusable="False">
+          <StackPanel>
+
+            <!-- general -->
+            <Border BorderBrush="{StaticResource Rule}" BorderThickness="0,0,0,1" Padding="20,16,20,18">
+              <StackPanel>
+                <TextBlock Text="General" Foreground="{StaticResource Ink}" FontSize="{StaticResource TextBase}" FontWeight="SemiBold" />
+                <Grid Margin="0,12,0,0" ColumnDefinitions="104,*">
+                  <TextBlock Text="osu! button" Foreground="{StaticResource Ink2}" FontSize="{StaticResource TextSm}" VerticalAlignment="Center"
+                             Background="Transparent" ToolTip.Tip="What the osu! button on each suggestion does." />
+                  <ComboBox x:Name="OsuTargetBox" Grid.Column="1" SelectionChanged="OsuTarget_Changed">
+                    <ComboBoxItem Content="Opens it in game" Tag="game" />
+                    <ComboBoxItem Content="Opens it in the browser" Tag="web" />
+                  </ComboBox>
+                </Grid>
+                <CheckBox x:Name="OnTopBox" Margin="0,14,0,0" IsCheckedChanged="OnTop_Changed" Content="Keep this window on top" />
+              </StackPanel>
+            </Border>
+
+            <!-- weights -->
+            <Border BorderBrush="{StaticResource Rule}" BorderThickness="0,0,0,1">
+              <StackPanel>
+                <ToggleButton x:Name="WeightsToggle" Theme="{StaticResource SectionToggle}" Tag="weights" IsCheckedChanged="Section_Changed">
+                  <StackPanel>
+                    <StackPanel Orientation="Horizontal">
+                      <TextBlock Text="Weights" Foreground="{StaticResource Ink}" FontSize="{StaticResource TextBase}" FontWeight="SemiBold" />
+                      <ContentControl Theme="{StaticResource InfoDot}" Margin="8,1,0,0"
+                                      ToolTip.Tip="What counts as similar. Raise a group and it weighs more when two maps are compared. Nothing is pushed in any direction: the same neighbours are measured differently. Not to be confused with Steer, which asks for something deliberately different." />
+                    </StackPanel>
+                    <TextBlock x:Name="WeightsSummary" Text="default" FontSize="{StaticResource TextXs}" Foreground="{StaticResource Ink3}"
+                               Margin="0,3,0,0" TextTrimming="CharacterEllipsis" />
+                  </StackPanel>
+                </ToggleButton>
+                <StackPanel IsVisible="{Binding #WeightsToggle.IsChecked}" Margin="20,0,20,18">
+                  <ItemsControl x:Name="WeightsList" ItemTemplate="{StaticResource SliderRowTemplate}" Focusable="False" />
+                  <Grid Margin="0,12,0,0" ColumnDefinitions="104,*">
+                    <TextBlock Text="Diverge on" Foreground="{StaticResource Ink2}" FontSize="{StaticResource TextSm}" VerticalAlignment="Center"
+                               Background="Transparent"
+                               ToolTip.Tip="Same difficulty, opposite challenge. Results stay close to your map on every group except the one you pick, and are then ranked by how far they are on it: an aim map when you came from a speed map. Useful for practising a weakness without changing level." />
+                    <ComboBox x:Name="DivergeBox" Grid.Column="1" SelectionChanged="Diverge_Changed" />
+                  </Grid>
+                  <Button Theme="{StaticResource BtnSm}" HorizontalAlignment="Left" Margin="-8,12,0,0" Click="ResetWeights_Click">
+                    <StackPanel Orientation="Horizontal">
+                      <ui:Icon Data="{StaticResource IconReset}" Width="13" Height="13" Margin="0,0,6,0" />
+                      <TextBlock Text="Reset weights" />
+                    </StackPanel>
+                  </Button>
+                </StackPanel>
+              </StackPanel>
+            </Border>
+
+            <!-- steer -->
+            <Border x:Name="SteerSection" BorderBrush="{StaticResource Rule}" BorderThickness="0,0,0,1" IsVisible="False">
+              <StackPanel>
+                <ToggleButton x:Name="SteerToggle" Theme="{StaticResource SectionToggle}" Tag="steer" IsCheckedChanged="Section_Changed">
+                  <StackPanel>
+                    <StackPanel Orientation="Horizontal">
+                      <TextBlock Text="Steer" Foreground="{StaticResource Ink}" FontSize="{StaticResource TextBase}" FontWeight="SemiBold" />
+                      <ContentControl Theme="{StaticResource InfoDot}" Margin="8,1,0,0"
+                                      ToolTip.Tip="What should be different: like this map, but denser. Maps that do not really clear the gap you ask for are dropped, so push too far and the list comes back empty. That is an honest answer: nothing indexed goes that far and still resembles this map." />
+                    </StackPanel>
+                    <TextBlock x:Name="SteerSummary" Text="straight ahead" FontSize="{StaticResource TextXs}" Foreground="{StaticResource Ink3}"
+                               Margin="0,3,0,0" TextTrimming="CharacterEllipsis" />
+                  </StackPanel>
+                </ToggleButton>
+                <StackPanel IsVisible="{Binding #SteerToggle.IsChecked}" Margin="20,0,20,18">
+                  <ItemsControl x:Name="SteerList" ItemTemplate="{StaticResource SteerRowTemplate}" Focusable="False" />
+                  <Button Theme="{StaticResource BtnSm}" HorizontalAlignment="Left" Margin="-8,12,0,0" Click="ResetSteer_Click">
+                    <StackPanel Orientation="Horizontal">
+                      <ui:Icon Data="{StaticResource IconReset}" Width="13" Height="13" Margin="0,0,6,0" />
+                      <TextBlock Text="Straight ahead" />
+                    </StackPanel>
+                  </Button>
+                </StackPanel>
+              </StackPanel>
+            </Border>
+
+            <!-- filters -->
+            <Border BorderBrush="{StaticResource Rule}" BorderThickness="0,0,0,1">
+              <StackPanel>
+                <ToggleButton x:Name="FiltersToggle" Theme="{StaticResource SectionToggle}" Tag="filters" IsCheckedChanged="Section_Changed">
+                  <StackPanel>
+                    <TextBlock Text="Filters" Foreground="{StaticResource Ink}" FontSize="{StaticResource TextBase}" FontWeight="SemiBold" />
+                    <TextBlock x:Name="FiltersSummary" Text="default" FontSize="{StaticResource TextXs}" Foreground="{StaticResource Ink3}"
+                               Margin="0,3,0,0" TextTrimming="CharacterEllipsis" />
+                  </StackPanel>
+                </ToggleButton>
+                <StackPanel IsVisible="{Binding #FiltersToggle.IsChecked}" Margin="20,0,20,18">
+                  <ItemsControl x:Name="FiltersList" ItemTemplate="{StaticResource SliderRowTemplate}" Focusable="False" />
+                  <CheckBox x:Name="SameSetBox" Margin="0,14,0,0" IsCheckedChanged="Filter_Changed"
+                            ToolTip.Tip="Other difficulties of the same set are near-identical by construction: they teach you nothing."
+                            Content="Exclude other difficulties of the same set" />
+                  <CheckBox x:Name="OnePerSongBox" Margin="0,10,0,0" IsCheckedChanged="Filter_Changed"
+                            ToolTip.Tip="Keep only the best-matching difficulty per song, so one popular track cannot fill half the list."
+                            Content="One difficulty per song" />
+                  <CheckBox x:Name="UnrankedBox" Margin="0,10,0,0" IsCheckedChanged="Filter_Changed"
+                            ToolTip.Tip="Heavily played graveyard and pending maps are in the pool too. Uncheck to keep only ranked and loved maps."
+                            Content="Include unranked maps" />
+                  <Button Theme="{StaticResource BtnSm}" HorizontalAlignment="Left" Margin="-8,12,0,0" Click="ResetFilters_Click">
+                    <StackPanel Orientation="Horizontal">
+                      <ui:Icon Data="{StaticResource IconReset}" Width="13" Height="13" Margin="0,0,6,0" />
+                      <TextBlock Text="Reset filters" />
+                    </StackPanel>
+                  </Button>
+                </StackPanel>
+              </StackPanel>
+            </Border>
+
+            <!-- connection -->
+            <Border BorderBrush="{StaticResource Rule}" BorderThickness="0,0,0,1">
+              <StackPanel>
+                <ToggleButton x:Name="ConnectionToggle" Theme="{StaticResource SectionToggle}" Tag="connection" IsCheckedChanged="Section_Changed">
+                  <StackPanel>
+                    <TextBlock Text="Connection" Foreground="{StaticResource Ink}" FontSize="{StaticResource TextBase}" FontWeight="SemiBold" />
+                    <Grid Margin="0,4,0,0" ColumnDefinitions="Auto,*">
+                      <Ellipse x:Name="StatusDot" Width="7" Height="7" Fill="{StaticResource Alert}" VerticalAlignment="Top" Margin="0,5,8,0" />
+                      <TextBlock x:Name="StatusText" Grid.Column="1" Text="looking for the game" FontFamily="{StaticResource Mono}"
+                                 FontSize="{StaticResource TextXs}" Foreground="{StaticResource Ink2}" TextWrapping="Wrap" />
+                    </Grid>
+                  </StackPanel>
+                </ToggleButton>
+                <StackPanel IsVisible="{Binding #ConnectionToggle.IsChecked}" Margin="20,0,20,20">
+                  <TextBlock x:Name="ConnectionHelp" Foreground="{StaticResource Ink3}" FontSize="{StaticResource TextSm}" TextWrapping="Wrap" LineHeight="19"
+                             Text="Nothing else has to run. osu!stable is read directly, read-only. Lazer and Torii are followed through their log and a copy of their beatmap database: their files are never written to. tosu, if open, is used instead." />
+                  <TextBlock Text="Search server" Theme="{StaticResource Label}" Margin="0,16,0,6" />
+                  <TextBlock x:Name="EngineText" Text="…" FontFamily="{StaticResource Mono}" FontSize="{StaticResource TextXs}"
+                             Foreground="{StaticResource Ink2}" Margin="0,0,0,8" />
+                  <TextBox x:Name="ApiBox" Watermark="auto: local server, then api.ayreth.site" FontFamily="{StaticResource Mono}" FontSize="{StaticResource TextSm}" />
+                  <TextBlock Text="tosu address (optional)" Theme="{StaticResource Label}" Margin="0,14,0,6" />
+                  <TextBox x:Name="TosuBox" Watermark="127.0.0.1:24050" FontFamily="{StaticResource Mono}" FontSize="{StaticResource TextSm}" />
+                  <TextBlock Foreground="{StaticResource Ink4}" FontSize="{StaticResource TextXs}" TextWrapping="Wrap" Margin="0,8,0,0" LineHeight="17"
+                             Text="Only the map's checksum leaves your machine. A map the server has never seen is sent as its .osu, used and dropped." />
+                  <Button Theme="{StaticResource Btn}" HorizontalAlignment="Left" Margin="0,16,0,0" Click="ApplyConnection_Click" Content="Reconnect" />
+                </StackPanel>
+              </StackPanel>
+            </Border>
+
+            <TextBlock x:Name="FooterText" Margin="20,18,20,24" FontSize="{StaticResource TextXs}" Foreground="{StaticResource Ink4}" TextWrapping="Wrap" LineHeight="17"
+                       Text="Drop a .osu file on the window, or paste a beatmap link with Ctrl+V, to search from any map. A fan project, not affiliated with ppy." />
+          </StackPanel>
+        </ScrollViewer>
+      </Border>
+    </Grid>
+
+    <!-- drop target -->
+    <Border x:Name="DropOverlay" Grid.RowSpan="3" Background="#E00A0A0C" IsVisible="False" IsHitTestVisible="False">
+      <Border BorderBrush="{StaticResource RuleStrong}" BorderThickness="1" CornerRadius="{StaticResource RadiusPanel}" Margin="24"
+              Background="{StaticResource Paper2}">
+        <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
+          <TextBlock Text="Drop a .osu file" Foreground="{StaticResource Ink}" FontSize="{StaticResource TextXl}" FontWeight="SemiBold"
+                     HorizontalAlignment="Center" />
+          <TextBlock Text="Its maps will be found from the file alone." Foreground="{StaticResource Ink3}" HorizontalAlignment="Center" Margin="0,6,0,0" />
+        </StackPanel>
+      </Border>
+    </Border>
+  </Grid>
+</Window>

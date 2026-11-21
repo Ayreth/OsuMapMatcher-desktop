@@ -1,6 +1,4 @@
-using System.Diagnostics;
 using System.IO;
-using System.Runtime.InteropServices;
 using System.Text;
 using Realms;
 
@@ -43,7 +41,7 @@ public sealed class LazerReader : IDisposable
             if (DateTime.UtcNow >= _nextProcessCheck)
             {
                 _nextProcessCheck = DateTime.UtcNow.AddSeconds(2);
-                _client = FindClient();
+                _client = GameProcesses.FindLazerClient();
                 if (_client is null) { Reset("lazer not running"); return null; }
                 var newest = NewestLog();
                 if (newest is null) { Reset($"{_client} running, no log found"); return null; }
@@ -78,32 +76,16 @@ public sealed class LazerReader : IDisposable
         _lastTitle = null;
     }
 
-    /// <summary>torii.exe, or a 64-bit osu!.exe (the 32-bit one is osu!stable).</summary>
-    private static string? FindClient()
-    {
-        if (Process.GetProcessesByName("torii").Length > 0) return "Torii";
-        foreach (var p in Process.GetProcessesByName("osu!"))
-        {
-            try
-            {
-                if (IsWow64Process(p.Handle, out var wow64) && !wow64) return "osu!lazer";
-            }
-            catch { /* access denied: not ours to read anyway */ }
-        }
-        return null;
-    }
-
     /// <summary>
-    /// Lazer keeps logs in its data folder, which storage.ini can move
+    /// Lazer keeps logs in its data folder (%AppData%\osu, ~/.local/share/osu,
+    /// ~/Library/Application Support/osu), which storage.ini can move
     /// elsewhere (Torii is often pointed at lazer's own folder).
     /// </summary>
     private static string? NewestLog()
     {
-        var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-        var roots = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var name in new[] { "osu-torii", "osu" })
+        var roots = new HashSet<string>(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+        foreach (var root in AppPaths.LazerDataRoots)
         {
-            var root = Path.Combine(appData, name);
             if (!Directory.Exists(root)) continue;
             roots.Add(root);
             var ini = Path.Combine(root, "storage.ini");
@@ -213,7 +195,7 @@ public sealed class LazerReader : IDisposable
         var sourceTime = File.GetLastWriteTimeUtc(source);
         if (_index.Count > 0 && sourceTime == _indexedSourceTime) return;
 
-        var folder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "osu!MapMatcher", "lazer-copy");
+        var folder = Path.Combine(AppPaths.CacheFolder, "lazer-copy");
         Directory.CreateDirectory(folder);
         foreach (var stale in Directory.EnumerateFileSystemEntries(folder))
         {
@@ -320,8 +302,4 @@ public sealed class LazerReader : IDisposable
         string DisplayTitle, string Md5, string FileHash, int OnlineId, int SetOnlineId,
         string Artist, string Title, string Mapper, string Version, string Ruleset,
         double Stars, double Bpm, double LengthMs, string? BackgroundHash, DateTimeOffset Added);
-
-    [DllImport("kernel32.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool IsWow64Process(IntPtr process, [MarshalAs(UnmanagedType.Bool)] out bool wow64);
 }

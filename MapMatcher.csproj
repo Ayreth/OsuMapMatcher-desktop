@@ -2,32 +2,51 @@
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net10.0-windows</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <UseWPF>true</UseWPF>
     <AssemblyName>MapMatcher</AssemblyName>
     <RootNamespace>MapMatcher</RootNamespace>
     <ApplicationIcon>Assets\app.ico</ApplicationIcon>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <Version>1.1.0</Version>
     <Product>osu!MapMatcher</Product>
     <Authors>Ayreth</Authors>
-    <!-- one exe, runtime included: double-click and it runs -->
-    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+    <BuiltInComInteropSupport>false</BuiltInComInteropSupport>
+    <!-- the test project and build outputs live below this folder: not part of the app -->
+    <DefaultItemExcludes>$(DefaultItemExcludes);tests/**;dist/**;publish/**;artifacts/**</DefaultItemExcludes>
+  </PropertyGroup>
+
+  <!--
+    dotnet publish -c Release -r <win-x64|linux-x64|osx-x64|osx-arm64>
+    Runtime included everywhere. Windows and Linux get one file: double-click and it runs.
+    macOS gets a folder, which the release workflow wraps into MapMatcher.app and signs.
+  -->
+  <PropertyGroup Condition="'$(_IsPublishing)' == 'true'">
+    <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == ''">$(NETCoreSdkRuntimeIdentifier)</RuntimeIdentifier>
     <SelfContained>true</SelfContained>
-    <PublishSingleFile>true</PublishSingleFile>
+    <PublishSingleFile Condition="!$(RuntimeIdentifier.StartsWith('osx'))">true</PublishSingleFile>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
   </PropertyGroup>
 
   <ItemGroup>
-    <Resource Include="Fonts\*.ttf" />
-    <Resource Include="Assets\app.ico" />
+    <AvaloniaResource Include="Fonts\*.ttf" />
+    <AvaloniaResource Include="Assets\app.ico" />
+    <AvaloniaResource Include="Assets\icon-256.png" />
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="Avalonia" Version="11.3.23" />
+    <PackageReference Include="Avalonia.Desktop" Version="11.3.23" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="11.3.23" />
     <PackageReference Include="Realm" Version="20.1.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="MapMatcher.Tests" />
   </ItemGroup>
 
 </Project>

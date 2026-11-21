@@ -1,8 +1,10 @@
 using System.ComponentModel;
 using System.Globalization;
 using System.Runtime.CompilerServices;
-using System.Windows;
-using System.Windows.Media;
+using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Media;
+using Avalonia.Media.Imaging;
 using MapMatcher.Core;
 
 namespace MapMatcher.Ui;
@@ -55,7 +57,8 @@ public static class Groups
             "Map settings and shape: CS, AR, OD, HP, slider ratio, object count, length, break time and overall density."),
     ];
 
-    public static Brush BrushFor(string resourceKey) => (Brush)Application.Current.Resources[resourceKey];
+    public static IBrush BrushFor(string resourceKey) =>
+        Application.Current?.TryFindResource(resourceKey, out var brush) == true && brush is IBrush b ? b : Brushes.Gray;
 
     public static string Label(string key) => All.FirstOrDefault(g => g.Key == key).Label ?? key;
 }
@@ -67,7 +70,7 @@ public sealed class SliderRow : Observable
     private readonly Func<double, string> _format;
 
     public SliderRow(string key, string label, string help, double min, double max, double step,
-                     double value, double @default, Func<double, string> format, Brush? swatch = null)
+                     double value, double @default, Func<double, string> format, IBrush? swatch = null)
     {
         Key = key; Label = label; Help = help; Min = min; Max = max; Step = step;
         Default = @default; _format = format; Swatch = swatch; _value = value;
@@ -80,7 +83,7 @@ public sealed class SliderRow : Observable
     public double Max { get; }
     public double Step { get; }
     public double Default { get; }
-    public Brush? Swatch { get; }
+    public IBrush? Swatch { get; }
     public bool HasSwatch => Swatch is not null;
 
     public double Value
@@ -133,8 +136,9 @@ public sealed class MatchVm : Observable
     public string MatchPct => Math.Round(100 * Model.Similarity).ToString(Fmt.Inv);
     public double MatchFill => Math.Clamp(Model.Similarity, 0, 1) * 40;
     public string Distance => Model.Distance.ToString("0.00", Fmt.Inv);
-    private ImageSource? _thumb;
-    public ImageSource? Thumb
+    private IBrush? _thumb;
+    /// <summary>The cover, as a brush: a picture must never size the row. Fetched when first shown.</summary>
+    public IBrush? Thumb
     {
         get
         {
@@ -148,6 +152,13 @@ public sealed class MatchVm : Observable
     }
     private bool _thumbAsked;
 
+    internal void SetThumb(Bitmap image)
+    {
+        _thumbAsked = true;
+        _thumb = new ImageBrush(image) { Stretch = Stretch.UniformToFill, AlignmentX = AlignmentX.Left };
+        Raise(nameof(Thumb));
+    }
+
     /// <summary>"game" or "web": what the osu! button on every row does.</summary>
     public static string OsuTarget { get; set; } = "game";
     public string OsuHelp => OsuTarget == "web" ? "Open the beatmap page in the browser" : "Open it in game to download";
@@ -159,9 +170,7 @@ public sealed class MatchVm : Observable
         var wide = url.Replace("list@2x", "cover").Replace("/list.", "/cover.");
         var image = wide != url ? await ImageLoader.LoadAsync(wide, 420) : null;
         image ??= await ImageLoader.LoadAsync(url, 200);
-        if (image is null) return;
-        _thumb = image;
-        Raise(nameof(Thumb));
+        if (image is not null) SetThumb(image);
     }
 
     // ranked is the normal case and stays quiet; the rest get a small tag
@@ -200,7 +209,7 @@ public sealed class MatchVm : Observable
     }
 }
 
-public sealed record ShareBar(string Label, Brush Brush, double Share)
+public sealed record ShareBar(string Label, IBrush Brush, double Share)
 {
     public GridLength Width => new(Math.Max(Share, 0.0001), GridUnitType.Star);
     public string Pct => $"{Math.Round(100 * Share).ToString(Fmt.Inv)}%";

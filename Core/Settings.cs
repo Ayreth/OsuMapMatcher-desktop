@@ -3,7 +3,10 @@ using System.Text.Json;
 
 namespace MapMatcher.Core;
 
-/// <summary>What the player set last time, kept in %AppData%\osu!MapMatcher.</summary>
+/// <summary>
+/// What the player set last time, kept in %AppData%\osu!MapMatcher on Windows,
+/// ~/.config/osu!MapMatcher on Linux, ~/Library/Application Support/osu!MapMatcher on macOS.
+/// </summary>
 public sealed class Settings
 {
     public Dictionary<string, double> Weights { get; set; } = [];
@@ -31,8 +34,7 @@ public sealed class Settings
     public bool Maximized { get; set; }
     public List<string> OpenSections { get; set; } = ["weights", "filters"];
 
-    private static string Folder =>
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "osu!MapMatcher");
+    private static string Folder => AppPaths.ConfigFolder;
     private static string FilePath => Path.Combine(Folder, "settings.json");
 
     public static Settings Load()

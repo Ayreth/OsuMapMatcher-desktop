@@ -65,6 +65,9 @@ public sealed class MapFeed : IDisposable
         if (Tosu.Connected) { on = true; text = "via tosu"; }
         else if (_stable.Attached) { on = true; text = "osu!stable connected"; }
         else if (_lazer.Attached) { on = true; text = _lazer.State; }
+        // the game is there but the OS keeps it closed: waiting will not help, say so
+        else if (_stable.Blocked) { on = false; text = _stable.State; }
+        else if (OperatingSystem.IsMacOS()) { on = false; text = "lazer or Torii not running · " + StableReader.MacOsState; }
         else { on = false; text = "osu!, lazer or Torii not running"; }
         var key = $"{on}|{text}";
         if (key == _lastStatus) return;

@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- MapMatcher.app; the release workflow replaces ${VERSION} -->
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key>
+  <string>MapMatcher</string>
+  <key>CFBundleDisplayName</key>
+  <string>osu!MapMatcher</string>
+  <key>CFBundleIdentifier</key>
+  <string>io.github.ayreth.osumapmatcher</string>
+  <key>CFBundleExecutable</key>
+  <string>MapMatcher</string>
+  <key>CFBundleIconFile</key>
+  <string>MapMatcher.icns</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>CFBundleInfoDictionaryVersion</key>
+  <string>6.0</string>
+  <key>CFBundleVersion</key>
+  <string>${VERSION}</string>
+  <key>CFBundleShortVersionString</key>
+  <string>${VERSION}</string>
+  <key>NSHighResolutionCapable</key>
+  <true/>
+  <key>NSPrincipalClass</key>
+  <string>NSApplication</string>
+  <key>LSApplicationCategoryType</key>
+  <string>public.app-category.games</string>
+  <key>NSHumanReadableCopyright</key>
+  <string>MIT licence. A fan project, not affiliated with ppy.</string>
+</dict>
+</plist>
